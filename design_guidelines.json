@@ -1,0 +1,145 @@
+{
+  "theme": "light_and_dark",
+  "archetype": "Organic & Earthy (Customized based on user explicit preferences)",
+  "typography": {
+    "fonts": {
+      "main": "DM Sans",
+      "numbers_and_currency": "DM Mono"
+    },
+    "scale": {
+      "h1": { "fontSize": 32, "lineHeight": 40, "fontFamily": "DMSans_700Bold" },
+      "h2": { "fontSize": 24, "lineHeight": 32, "fontFamily": "DMSans_700Bold" },
+      "h3": { "fontSize": 20, "lineHeight": 28, "fontFamily": "DMSans_600SemiBold" },
+      "body": { "fontSize": 16, "lineHeight": 24, "fontFamily": "DMSans_400Regular" },
+      "small": { "fontSize": 14, "lineHeight": 20, "fontFamily": "DMSans_400Regular" },
+      "caption": { "fontSize": 12, "lineHeight": 16, "fontFamily": "DMSans_400Regular" },
+      "currency_large": { "fontSize": 36, "lineHeight": 44, "fontFamily": "DMMono_500Medium" },
+      "currency_medium": { "fontSize": 24, "lineHeight": 32, "fontFamily": "DMMono_500Medium" },
+      "currency_small": { "fontSize": 16, "lineHeight": 24, "fontFamily": "DMMono_400Regular" }
+    }
+  },
+  "colors": {
+    "light": {
+      "background": "#f7f6f2",
+      "surface": "#ffffff",
+      "surface_secondary": "#f0efe9",
+      "text_primary": "#1a1a18",
+      "text_muted": "#6b6b63",
+      "border": "rgba(0,0,0,0.08)",
+      "income": "#2d5a3d",
+      "expense": "#c84b1f",
+      "warning": "#b8740a",
+      "savings": "#1a4a8a"
+    },
+    "dark": {
+      "background": "#1a1a18",
+      "surface": "#2a2a28",
+      "surface_secondary": "#333331",
+      "text_primary": "#ffffff",
+      "text_muted": "#6b6b63",
+      "border": "rgba(255,255,255,0.08)",
+      "income": "#43a047", 
+      "expense": "#e57373", 
+      "warning": "#ffb74d", 
+      "savings": "#64b5f6" 
+    }
+  },
+  "spacing": {
+    "xs": 4,
+    "sm": 8,
+    "md": 16,
+    "lg": 24,
+    "xl": 32,
+    "xxl": 48
+  },
+  "borders": {
+    "radius_card": 12,
+    "radius_button": 12,
+    "radius_pill": 9999,
+    "width_subtle": 0.5
+  },
+  "shadows": {
+    "none": {
+      "shadowColor": "transparent",
+      "shadowOffset": { "width": 0, "height": 0 },
+      "shadowOpacity": 0,
+      "shadowRadius": 0,
+      "elevation": 0
+    }
+  },
+  "components": {
+    "cards": {
+      "borderRadius": 12,
+      "borderWidth": 0.5,
+      "padding": 16,
+      "shadows": "none (flat and clean as requested)",
+      "marginBottom": 16
+    },
+    "buttons": {
+      "borderRadius": 12,
+      "paddingVertical": 14,
+      "paddingHorizontal": 24,
+      "alignItems": "center",
+      "justifyContent": "center",
+      "flexDirection": "row"
+    },
+    "category_dots": {
+      "width": 12,
+      "height": 12,
+      "borderRadius": 6,
+      "marginRight": 8
+    },
+    "inputs": {
+      "borderRadius": 12,
+      "borderWidth": 0.5,
+      "padding": 14,
+      "fontSize": 16,
+      "marginBottom": 16
+    }
+  },
+  "navigation": {
+    "bottom_tabs": {
+      "screens": ["Setup", "Bills", "Expenses", "Dashboard"],
+      "styling": {
+        "borderTopWidth": 0.5,
+        "elevation": 0,
+        "shadowOpacity": 0
+      }
+    }
+  },
+  "charts": {
+    "library": "react-native-chart-kit",
+    "config": {
+      "chartConfig": {
+        "backgroundGradientFromOpacity": 0,
+        "backgroundGradientToOpacity": 0,
+        "color": "(opacity = 1) => `rgba(26, 26, 24, ${opacity})`",
+        "strokeWidth": 2,
+        "barPercentage": 0.6,
+        "useShadowColorFromDataset": false,
+        "propsForDots": { "r": "0" },
+        "propsForLabels": { "fontFamily": "DMMono_400Regular" }
+      }
+    }
+  },
+  "media": {
+    "image_urls": {
+      "onboarding_illustration": {
+        "url": "https://images.unsplash.com/photo-1666537072157-440346cea066?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwZmluYW5jZSUyMGNoYXJ0JTIwaWxsdXN0cmF0aW9ufGVufDB8fHx8MTc3NjM2OTE1MXww&ixlib=rb-4.1.0&q=85",
+        "category": "illustration",
+        "description": "Abstract/minimalist engineering drawing to be used in onboarding as a visual accent (optional)."
+      }
+    }
+  },
+  "instructions_to_main_agent": {
+    "1": "Strictly use React Native & Expo. Do not use Next.js, HTML, or Tailwind CSS classes. Use React Native's StyleSheet API.",
+    "2": "Install Expo Google Fonts specifically `@expo-google-fonts/dm-sans` and `@expo-google-fonts/dm-mono` and use `useFonts` hook for loading.",
+    "3": "Implement a solid Theme context (or use React Navigation's DarkTheme/DefaultTheme overrides) to provide automatic switching between light and dark modes based on device system settings. Use `useColorScheme` hook from React Native.",
+    "4": "Use `react-native-chart-kit` for all charts. Dashboard requires: bar chart for budget vs actual, donut charts for expenses and bills.",
+    "5": "UI MUST be completely flat (no shadows/elevation), relying on the 0.5px border and surface/background color contrast to define hierarchy. Use 12px border radius for all cards.",
+    "6": "Typography: Enforce DM Mono exclusively for any textual element representing numbers, currency, or numerical stats. DM Sans for all standard text (labels, headers, descriptions).",
+    "7": "Use MongoDB (Mongoose) for the backend API, and expose standard REST routes using Express (if building a custom backend) or FastAPI if strictly adhering to the tech stack (Wait: user stated MongoDB backend, and system says FastAPI. Implement FastAPI backend with Motor/PyMongo). Provide simple schemas for Bills, Expenses, and User Configuration.",
+    "8": "Include explicit test IDs via `testID` (not `data-testid` in React Native) property on interactive elements for automated testing (e.g., `testID=\"add-expense-button\"`).",
+    "9": "Screens structure: Ensure Setup, Bills, Expenses, Dashboard are configured in the Bottom Tab Navigator. Onboarding, App Settings, and Monthly History should be Stack screens that overlay or navigate from tabs."
+  }
+}
