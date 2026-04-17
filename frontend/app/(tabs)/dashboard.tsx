@@ -5,7 +5,7 @@ import {
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { PieChart } from 'react-native-chart-kit';
 import { useThemeColors } from '@/src/theme';
@@ -18,6 +18,7 @@ const SCREEN_W = Dimensions.get('window').width;
 
 export default function DashboardScreen() {
   const c = useThemeColors();
+  const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [showGoalForm, setShowGoalForm] = useState(false);
@@ -119,8 +120,20 @@ export default function DashboardScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: c.background }}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          <Text style={[styles.title, { color: c.textPrimary }]}>Dashboard</Text>
-          <Text style={[styles.subtitle, { color: c.textMuted }]}>Your financial overview</Text>
+          <View style={styles.dashHeader}>
+            <View>
+              <Text style={[styles.title, { color: c.textPrimary }]}>Dashboard</Text>
+              <Text style={[styles.subtitle, { color: c.textMuted }]}>Your financial overview</Text>
+            </View>
+            <View style={styles.headerActions}>
+              <TouchableOpacity testID="nav-history-btn" onPress={() => router.push('/history')} style={styles.headerIcon}>
+                <Ionicons name="time-outline" size={22} color={c.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity testID="nav-settings-btn" onPress={() => router.push('/settings')} style={styles.headerIcon}>
+                <Ionicons name="cog-outline" size={22} color={c.textMuted} />
+              </TouchableOpacity>
+            </View>
+          </View>
 
           {/* ── Metric Cards ── */}
           <View style={styles.metricsRow}>
@@ -345,6 +358,9 @@ const styles = StyleSheet.create({
   scroll: { padding: 24, paddingBottom: 48 },
   title: { fontFamily: 'DMSans_700Bold', fontSize: 32, lineHeight: 40, marginBottom: 4 },
   subtitle: { fontFamily: 'DMSans_400Regular', fontSize: 16, lineHeight: 24, marginBottom: 24 },
+  dashHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
+  headerActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  headerIcon: { padding: 8, borderRadius: 10 },
   sectionTitle: { fontFamily: 'DMSans_600SemiBold', fontSize: 18, marginBottom: 12, marginTop: 8 },
   card: { borderRadius: 12, borderWidth: 0.5, padding: 16, marginBottom: 16 },
 

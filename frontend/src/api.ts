@@ -30,6 +30,8 @@ export const createExpense = (data: any) =>
   api('/api/expenses', { method: 'POST', body: JSON.stringify(data) });
 export const deleteExpense = (id: string) =>
   api(`/api/expenses/${id}`, { method: 'DELETE' });
+export const toggleRecurring = (id: string) =>
+  api(`/api/expenses/${id}/toggle-recurring`, { method: 'PATCH' });
 
 // Savings Goals
 export const getSavingsGoals = () => api('/api/savings-goals');
@@ -42,3 +44,11 @@ export const deleteSavingsGoal = (id: string) =>
 
 // Dashboard
 export const getDashboard = () => api('/api/dashboard');
+
+// Monthly History
+export const getMonthlyHistory = () => api('/api/monthly-history');
+export const getMonthlyDetail = (month: string) => api(`/api/monthly-detail/${month}`);
+
+// Recurring & Reset
+export const processRecurring = () => api('/api/process-recurring', { method: 'POST' });
+export const resetAllData = () => api('/api/reset', { method: 'POST' });

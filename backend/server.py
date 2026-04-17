@@ -48,6 +48,7 @@ class ExpenseCreate(BaseModel):
     category: str
     amount: float
     date: Optional[str] = None
+    recurring: bool = False
 
 class Expense(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -55,6 +56,7 @@ class Expense(BaseModel):
     category: str
     amount: float
     date: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime('%Y-%m-%d'))
+    recurring: bool = False
 
 class SavingsGoalCreate(BaseModel):
     name: str
@@ -135,6 +137,16 @@ async def delete_expense(expense_id: str):
         raise HTTPException(status_code=404, detail="Expense not found")
     return {"deleted": True}
 
+@api_router.patch("/expenses/{expense_id}/toggle-recurring")
+async def toggle_recurring(expense_id: str):
+    exp = await db.expenses.find_one({"id": expense_id}, {"_id": 0})
+    if not exp:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    new_val = not exp.get("recurring", False)
+    await db.expenses.update_one({"id": expense_id}, {"$set": {"recurring": new_val}})
+    exp["recurring"] = new_val
+    return exp
+
 
 # ── Savings Goals ───────────────────────────────────────────────────
 
@@ -196,7 +208,6 @@ async def get_dashboard():
     salary = settings.get("salary", 0)
     net_remaining = salary - total_bills - total_expenses
 
-    # aggregate by category
     bills_by_cat: dict = {}
     for b in bills:
         c = b["category"]
@@ -212,11 +223,7 @@ async def get_dashboard():
     needs_target = salary * pn / 100
     wants_target = salary * pw / 100
     savings_target = salary * ps / 100
-    needs_actual = total_bills
-    wants_actual = total_expenses
-    savings_actual = max(net_remaining, 0)
 
-    # smart tip
     if salary == 0:
         smart_tip = "Set up your monthly salary in the Setup tab to get started!"
     elif net_remaining < 0:
@@ -225,7 +232,7 @@ async def get_dashboard():
         smart_tip = "Your bills take up more than 50% of income. Look for ways to reduce fixed costs."
     elif total_expenses > salary * 0.3:
         smart_tip = "Discretionary spending is above 30%. The 50/30/20 rule suggests keeping wants under 30%."
-    elif savings_actual >= savings_target > 0:
+    elif max(net_remaining, 0) >= savings_target > 0:
         smart_tip = "You're on track with savings! Consider increasing your goals or starting investments."
     elif len(bills) == 0 and len(expenses) == 0:
         smart_tip = "Start by adding your monthly bills and daily expenses to see your financial picture."
@@ -252,20 +259,130 @@ async def get_dashboard():
             for k, v in expenses_by_cat.items()
         ],
         "budget_comparison": {
-            "needs": {"target": needs_target, "actual": needs_actual},
-            "wants": {"target": wants_target, "actual": wants_actual},
-            "savings": {"target": savings_target, "actual": savings_actual},
+            "needs": {"target": needs_target, "actual": total_bills},
+            "wants": {"target": wants_target, "actual": total_expenses},
+            "savings": {"target": savings_target, "actual": max(net_remaining, 0)},
         },
         "smart_tip": smart_tip,
         "savings_goals": savings_goals,
         "all_spending": all_spending,
         "cashflow": {
-            "income": salary,
-            "bills": total_bills,
-            "expenses": total_expenses,
-            "net": net_remaining,
+            "income": salary, "bills": total_bills,
+            "expenses": total_expenses, "net": net_remaining,
         },
     }
+
+
+# ── Monthly History ─────────────────────────────────────────────────
+
+@api_router.get("/monthly-history")
+async def get_monthly_history():
+    settings = await db.settings.find_one({}, {"_id": 0})
+    salary = settings.get("salary", 0) if settings else 0
+    currency = settings.get("currency", "$") if settings else "$"
+    bills = await db.bills.find({}, {"_id": 0}).to_list(1000)
+    expenses = await db.expenses.find({}, {"_id": 0}).to_list(10000)
+    total_bills = sum(b["amount"] for b in bills)
+
+    months: dict = {}
+    for e in expenses:
+        m = e["date"][:7]
+        if m not in months:
+            months[m] = {"total": 0, "count": 0}
+        months[m]["total"] += e["amount"]
+        months[m]["count"] += 1
+
+    # include current month even if no expenses
+    cur = datetime.now(timezone.utc).strftime('%Y-%m')
+    if cur not in months:
+        months[cur] = {"total": 0, "count": 0}
+
+    result = []
+    for m in sorted(months.keys(), reverse=True):
+        d = months[m]
+        result.append({
+            "month": m, "salary": salary, "currency": currency,
+            "bills": total_bills, "expenses": d["total"],
+            "expense_count": d["count"],
+            "net": salary - total_bills - d["total"],
+        })
+    return result
+
+
+@api_router.get("/monthly-detail/{month}")
+async def get_monthly_detail(month: str):
+    settings = await db.settings.find_one({}, {"_id": 0})
+    salary = settings.get("salary", 0) if settings else 0
+    currency = settings.get("currency", "$") if settings else "$"
+    bills = await db.bills.find({}, {"_id": 0}).to_list(1000)
+    expenses = await db.expenses.find(
+        {"date": {"$regex": f"^{month}"}}, {"_id": 0}
+    ).to_list(10000)
+
+    total_bills = sum(b["amount"] for b in bills)
+    total_expenses = sum(e["amount"] for e in expenses)
+
+    exp_by_cat: dict = {}
+    for e in expenses:
+        exp_by_cat[e["category"]] = exp_by_cat.get(e["category"], 0) + e["amount"]
+    bill_by_cat: dict = {}
+    for b in bills:
+        bill_by_cat[b["category"]] = bill_by_cat.get(b["category"], 0) + b["amount"]
+
+    return {
+        "month": month, "salary": salary, "currency": currency,
+        "total_bills": total_bills, "total_expenses": total_expenses,
+        "net": salary - total_bills - total_expenses,
+        "expenses": expenses, "bills": bills,
+        "expenses_by_category": [{"name": k, "amount": v} for k, v in exp_by_cat.items()],
+        "bills_by_category": [{"name": k, "amount": v} for k, v in bill_by_cat.items()],
+    }
+
+
+# ── Recurring Expenses Processing ──────────────────────────────────
+
+@api_router.post("/process-recurring")
+async def process_recurring():
+    settings = await db.settings.find_one({}, {"_id": 0})
+    last_processed = settings.get("lastRecurringMonth") if settings else None
+    current_month = datetime.now(timezone.utc).strftime('%Y-%m')
+
+    if last_processed == current_month:
+        return {"processed": False, "created": 0}
+
+    recurring = await db.expenses.find({"recurring": True}, {"_id": 0}).to_list(1000)
+    new_date = datetime.now(timezone.utc).strftime('%Y-%m-01')
+    created = 0
+    for exp in recurring:
+        # don't duplicate if already created this month
+        exists = await db.expenses.find_one({
+            "name": exp["name"], "category": exp["category"],
+            "recurring": True, "date": {"$regex": f"^{current_month}"}
+        })
+        if exists:
+            continue
+        new_exp = Expense(
+            name=exp["name"], category=exp["category"],
+            amount=exp["amount"], date=new_date,
+        )
+        d = new_exp.model_dump()
+        d["recurring"] = True
+        await db.expenses.insert_one(d.copy())
+        created += 1
+
+    await db.settings.update_one({}, {"$set": {"lastRecurringMonth": current_month}}, upsert=True)
+    return {"processed": True, "created": created}
+
+
+# ── Reset All Data ──────────────────────────────────────────────────
+
+@api_router.post("/reset")
+async def reset_all_data():
+    await db.settings.delete_many({})
+    await db.bills.delete_many({})
+    await db.expenses.delete_many({})
+    await db.savings_goals.delete_many({})
+    return {"reset": True}
 
 
 # ── Health ──────────────────────────────────────────────────────────

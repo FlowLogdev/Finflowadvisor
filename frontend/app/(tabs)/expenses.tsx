@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColors } from '@/src/theme';
-import { getExpenses, createExpense, deleteExpense, getSettings } from '@/src/api';
+import { getExpenses, createExpense, deleteExpense, toggleRecurring, getSettings } from '@/src/api';
 import { Expense, EXPENSE_CATEGORIES, EXPENSE_CATEGORY_COLORS, Settings } from '@/src/types';
 
 export default function ExpensesScreen() {
@@ -20,6 +20,7 @@ export default function ExpensesScreen() {
   const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0]);
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [recurring, setRecurring] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useFocusEffect(
@@ -46,12 +47,13 @@ export default function ExpensesScreen() {
     try {
       const exp = await createExpense({
         name: name.trim(), category,
-        amount: parseFloat(amount), date,
+        amount: parseFloat(amount), date, recurring,
       });
       setExpenses([...expenses, exp]);
       setName('');
       setAmount('');
       setDate(new Date().toISOString().slice(0, 10));
+      setRecurring(false);
       setShowForm(false);
     } catch (e) {
       console.error(e);
@@ -71,6 +73,15 @@ export default function ExpensesScreen() {
         },
       },
     ]);
+  };
+
+  const handleToggleRecurring = async (id: string) => {
+    try {
+      const updated = await toggleRecurring(id);
+      setExpenses(expenses.map((e) => (e.id === id ? updated : e)));
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
@@ -175,6 +186,17 @@ export default function ExpensesScreen() {
                 value={date}
                 onChangeText={setDate}
               />
+              {/* Recurring toggle */}
+              <TouchableOpacity
+                testID="expense-recurring-toggle"
+                onPress={() => setRecurring(!recurring)}
+                style={[styles.recurringRow, { backgroundColor: recurring ? c.savings + '18' : c.surfaceSecondary, borderColor: recurring ? c.savings : c.border }]}
+              >
+                <Ionicons name={recurring ? 'repeat' : 'repeat-outline'} size={18} color={recurring ? c.savings : c.textMuted} />
+                <Text style={[styles.recurringText, { color: recurring ? c.savings : c.textMuted }]}>
+                  {recurring ? 'Recurring monthly' : 'Mark as recurring'}
+                </Text>
+              </TouchableOpacity>
               <TouchableOpacity testID="submit-expense-btn" onPress={addExpense} disabled={submitting} style={[styles.submitBtn, { backgroundColor: c.income }]}>
                 {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>Add Expense</Text>}
               </TouchableOpacity>
@@ -188,16 +210,30 @@ export default function ExpensesScreen() {
               <Text style={[styles.emptyText, { color: c.textMuted }]}>No expenses yet. Add your first expense!</Text>
             </View>
           ) : (
-            [...expenses].reverse().map((exp) => (
+            [...expenses].reverse().map((exp: any) => (
               <View key={exp.id} style={[styles.itemCard, { backgroundColor: c.surface, borderColor: c.border }]}>
                 <View style={[styles.colorDot, { backgroundColor: EXPENSE_CATEGORY_COLORS[exp.category] || '#95A5A6' }]} />
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.itemName, { color: c.textPrimary }]}>{exp.name}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={[styles.itemName, { color: c.textPrimary }]}>{exp.name}</Text>
+                    {exp.recurring && (
+                      <View style={[styles.recurBadge, { backgroundColor: c.savings + '22' }]}>
+                        <Ionicons name="repeat" size={10} color={c.savings} />
+                      </View>
+                    )}
+                  </View>
                   <Text style={[styles.itemMeta, { color: c.textMuted }]}>{exp.category} · {exp.date}</Text>
                 </View>
                 <Text style={[styles.itemAmount, { color: c.expense }]}>{cur}{exp.amount.toLocaleString()}</Text>
-                <TouchableOpacity testID={`delete-expense-${exp.id}`} onPress={() => removeExpense(exp.id)} style={styles.deleteBtn}>
-                  <Ionicons name="trash-outline" size={18} color={c.expense} />
+                <TouchableOpacity
+                  testID={`toggle-recurring-${exp.id}`}
+                  onPress={() => handleToggleRecurring(exp.id)}
+                  style={styles.iconBtn}
+                >
+                  <Ionicons name={exp.recurring ? 'repeat' : 'repeat-outline'} size={16} color={exp.recurring ? c.savings : c.textMuted} />
+                </TouchableOpacity>
+                <TouchableOpacity testID={`delete-expense-${exp.id}`} onPress={() => removeExpense(exp.id)} style={styles.iconBtn}>
+                  <Ionicons name="trash-outline" size={16} color={c.expense} />
                 </TouchableOpacity>
               </View>
             ))
@@ -225,14 +261,17 @@ const styles = StyleSheet.create({
   catScroll: { marginBottom: 12 },
   catPill: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 9999, borderWidth: 0.5, marginRight: 8 },
   catPillText: { fontFamily: 'DMSans_500Medium', fontSize: 13 },
+  recurringRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 12, borderWidth: 0.5, marginBottom: 12 },
+  recurringText: { fontFamily: 'DMSans_500Medium', fontSize: 14 },
   submitBtn: { borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   submitBtnText: { fontFamily: 'DMSans_600SemiBold', fontSize: 15, color: '#fff' },
-  itemCard: { borderRadius: 12, borderWidth: 0.5, padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  colorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 12 },
-  itemName: { fontFamily: 'DMSans_500Medium', fontSize: 15 },
-  itemMeta: { fontFamily: 'DMSans_400Regular', fontSize: 12, marginTop: 2 },
-  itemAmount: { fontFamily: 'DMMono_500Medium', fontSize: 16, marginRight: 12 },
-  deleteBtn: { padding: 8 },
+  itemCard: { borderRadius: 12, borderWidth: 0.5, padding: 12, flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  colorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 10 },
+  itemName: { fontFamily: 'DMSans_500Medium', fontSize: 14 },
+  itemMeta: { fontFamily: 'DMSans_400Regular', fontSize: 11, marginTop: 2 },
+  itemAmount: { fontFamily: 'DMMono_500Medium', fontSize: 14, marginRight: 8 },
+  iconBtn: { padding: 6 },
+  recurBadge: { width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   emptyCard: { borderRadius: 12, borderWidth: 0.5, padding: 32, alignItems: 'center', justifyContent: 'center' },
   emptyText: { fontFamily: 'DMSans_400Regular', fontSize: 15, marginTop: 12, textAlign: 'center' },
 });

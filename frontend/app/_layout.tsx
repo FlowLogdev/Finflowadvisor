@@ -11,16 +11,32 @@ import {
   DMMono_500Medium,
 } from '@expo-google-fonts/dm-mono';
 import { StatusBar } from 'expo-status-bar';
-import { useColorScheme, ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { ThemeProvider, useTheme } from '@/src/theme';
 
 SplashScreen.preventAutoHideAsync();
 
-export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+function InnerLayout() {
+  const { isDark } = useTheme();
 
+  return (
+    <>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="history" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="month-detail" options={{ presentation: 'modal' }} />
+      </Stack>
+    </>
+  );
+}
+
+export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     DMSans_400Regular,
     DMSans_500Medium,
@@ -36,18 +52,15 @@ export default function RootLayout() {
 
   if (!fontsLoaded) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: isDark ? '#1a1a18' : '#f7f6f2' }}>
-        <ActivityIndicator size="large" color={isDark ? '#43a047' : '#2d5a3d'} />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f7f6f2' }}>
+        <ActivityIndicator size="large" color="#2d5a3d" />
       </View>
     );
   }
 
   return (
-    <>
-      <StatusBar style={isDark ? 'light' : 'dark'} />
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="(tabs)" />
-      </Stack>
-    </>
+    <ThemeProvider>
+      <InnerLayout />
+    </ThemeProvider>
   );
 }

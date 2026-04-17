@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, ScrollView, FlatList,
+  View, Text, TextInput, TouchableOpacity, ScrollView,
   StyleSheet, ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,6 +19,7 @@ export default function BillsScreen() {
   const [name, setName] = useState('');
   const [category, setCategory] = useState<string>(BILL_CATEGORIES[0]);
   const [amount, setAmount] = useState('');
+  const [dueDay, setDueDay] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useFocusEffect(
@@ -43,10 +44,16 @@ export default function BillsScreen() {
     if (!name.trim() || !amount.trim()) return;
     setSubmitting(true);
     try {
-      const bill = await createBill({ name: name.trim(), category, amount: parseFloat(amount) });
+      const dd = parseInt(dueDay, 10);
+      const bill = await createBill({
+        name: name.trim(), category,
+        amount: parseFloat(amount),
+        dueDay: dd >= 1 && dd <= 31 ? dd : null,
+      });
       setBills([...bills, bill]);
       setName('');
       setAmount('');
+      setDueDay('');
       setShowForm(false);
     } catch (e) {
       console.error(e);
@@ -73,6 +80,14 @@ export default function BillsScreen() {
   const remaining = salary - totalBills;
   const pctOfIncome = salary > 0 ? ((totalBills / salary) * 100).toFixed(1) : '0';
   const cur = settings?.currency || '$';
+
+  // Check which bills are due soon (within 3 days)
+  const today = new Date().getDate();
+  const isDueSoon = (dueDay?: number | null) => {
+    if (!dueDay) return false;
+    const diff = dueDay - today;
+    return diff >= 0 && diff <= 3;
+  };
 
   if (loading) {
     return (
@@ -138,15 +153,27 @@ export default function BillsScreen() {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-              <TextInput
-                testID="bill-amount-input"
-                style={[styles.input, { backgroundColor: c.surfaceSecondary, borderColor: c.border, color: c.textPrimary }]}
-                placeholder={`Amount (${cur})`}
-                placeholderTextColor={c.textMuted}
-                value={amount}
-                onChangeText={setAmount}
-                keyboardType="numeric"
-              />
+              <View style={styles.rowInputs}>
+                <TextInput
+                  testID="bill-amount-input"
+                  style={[styles.input, { flex: 1, backgroundColor: c.surfaceSecondary, borderColor: c.border, color: c.textPrimary }]}
+                  placeholder={`Amount (${cur})`}
+                  placeholderTextColor={c.textMuted}
+                  value={amount}
+                  onChangeText={setAmount}
+                  keyboardType="numeric"
+                />
+                <TextInput
+                  testID="bill-due-day-input"
+                  style={[styles.input, { width: 100, backgroundColor: c.surfaceSecondary, borderColor: c.border, color: c.textPrimary }]}
+                  placeholder="Due day"
+                  placeholderTextColor={c.textMuted}
+                  value={dueDay}
+                  onChangeText={setDueDay}
+                  keyboardType="numeric"
+                  maxLength={2}
+                />
+              </View>
               <TouchableOpacity testID="submit-bill-btn" onPress={addBill} disabled={submitting} style={[styles.submitBtn, { backgroundColor: c.income }]}>
                 {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>Add Bill</Text>}
               </TouchableOpacity>
@@ -160,24 +187,42 @@ export default function BillsScreen() {
               <Text style={[styles.emptyText, { color: c.textMuted }]}>No bills yet. Add your first bill!</Text>
             </View>
           ) : (
-            bills.map((bill) => (
-              <View key={bill.id} style={[styles.itemCard, { backgroundColor: c.surface, borderColor: c.border }]}>
-                <View style={[styles.colorDot, { backgroundColor: BILL_CATEGORY_COLORS[bill.category] || '#95A5A6' }]} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.itemName, { color: c.textPrimary }]}>{bill.name}</Text>
-                  <Text style={[styles.itemCategory, { color: c.textMuted }]}>{bill.category}</Text>
+            bills.map((bill) => {
+              const dueSoon = isDueSoon(bill.dueDay);
+              return (
+                <View key={bill.id} style={[styles.itemCard, { backgroundColor: c.surface, borderColor: dueSoon ? c.warning : c.border, borderWidth: dueSoon ? 1.5 : 0.5 }]}>
+                  <View style={[styles.colorDot, { backgroundColor: BILL_CATEGORY_COLORS[bill.category] || '#95A5A6' }]} />
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={[styles.itemName, { color: c.textPrimary }]}>{bill.name}</Text>
+                      {dueSoon && (
+                        <View style={[styles.dueBadge, { backgroundColor: c.warning + '22' }]}>
+                          <Text style={[styles.dueBadgeText, { color: c.warning }]}>Due soon</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={[styles.itemCategory, { color: c.textMuted }]}>
+                      {bill.category}{bill.dueDay ? ` · Due: ${bill.dueDay}${ordinal(bill.dueDay)}` : ''}
+                    </Text>
+                  </View>
+                  <Text style={[styles.itemAmount, { color: c.expense }]}>{cur}{bill.amount.toLocaleString()}</Text>
+                  <TouchableOpacity testID={`delete-bill-${bill.id}`} onPress={() => removeBill(bill.id)} style={styles.deleteBtn}>
+                    <Ionicons name="trash-outline" size={18} color={c.expense} />
+                  </TouchableOpacity>
                 </View>
-                <Text style={[styles.itemAmount, { color: c.expense }]}>{cur}{bill.amount.toLocaleString()}</Text>
-                <TouchableOpacity testID={`delete-bill-${bill.id}`} onPress={() => removeBill(bill.id)} style={styles.deleteBtn}>
-                  <Ionicons name="trash-outline" size={18} color={c.expense} />
-                </TouchableOpacity>
-              </View>
-            ))
+              );
+            })
           )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
+}
+
+function ordinal(n: number) {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return s[(v - 20) % 10] || s[v] || s[0];
 }
 
 function SummaryItem({ label, value, color, mutedColor }: { label: string; value: string; color: string; mutedColor: string }) {
@@ -206,14 +251,17 @@ const styles = StyleSheet.create({
   catScroll: { marginBottom: 12 },
   catPill: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 9999, borderWidth: 0.5, marginRight: 8 },
   catPillText: { fontFamily: 'DMSans_500Medium', fontSize: 13 },
+  rowInputs: { flexDirection: 'row', gap: 12 },
   submitBtn: { borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   submitBtnText: { fontFamily: 'DMSans_600SemiBold', fontSize: 15, color: '#fff' },
-  itemCard: { borderRadius: 12, borderWidth: 0.5, padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  itemCard: { borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   colorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 12 },
   itemName: { fontFamily: 'DMSans_500Medium', fontSize: 15 },
   itemCategory: { fontFamily: 'DMSans_400Regular', fontSize: 12, marginTop: 2 },
   itemAmount: { fontFamily: 'DMMono_500Medium', fontSize: 16, marginRight: 12 },
   deleteBtn: { padding: 8 },
+  dueBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
+  dueBadgeText: { fontFamily: 'DMSans_500Medium', fontSize: 10 },
   emptyCard: { borderRadius: 12, borderWidth: 0.5, padding: 32, alignItems: 'center', justifyContent: 'center' },
   emptyText: { fontFamily: 'DMSans_400Regular', fontSize: 15, marginTop: 12, textAlign: 'center' },
 });
