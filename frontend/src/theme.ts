@@ -68,10 +68,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const isDark = mode === 'system' ? systemScheme === 'dark' : mode === 'dark';
   const colors = isDark ? darkColors : lightColors;
 
-  return (
-    <ThemeContext.Provider value={{ colors, isDark, mode, setMode }}>
-      {children}
-    </ThemeContext.Provider>
+  return React.createElement(
+    ThemeContext.Provider,
+    { value: { colors, isDark, mode, setMode } },
+    children
   );
 }
 
