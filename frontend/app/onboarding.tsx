@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useThemeColors } from '@/src/theme';
+import { FinFlowLogo, ThemeToggle } from '@/src/components/LogoHeader';
 
 const { width } = Dimensions.get('window');
 
@@ -57,15 +58,20 @@ export default function OnboardingScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.background }]}>
       <View style={styles.header}>
+        <ThemeToggle />
         <TouchableOpacity testID="onboarding-skip-btn" onPress={skip}>
           <Text style={[styles.skipText, { color: c.textMuted }]}>Skip</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={[styles.iconCircle, { backgroundColor: current.color + '18' }]}>
-          <Ionicons name={current.icon} size={48} color={current.color} />
-        </View>
+        {step === 0 ? (
+          <FinFlowLogo size={80} />
+        ) : (
+          <View style={[styles.iconCircle, { backgroundColor: current.color + '18' }]}>
+            <Ionicons name={current.icon} size={48} color={current.color} />
+          </View>
+        )}
 
         <Text style={[styles.title, { color: c.textPrimary }]}>{current.title}</Text>
         <Text style={[styles.subtitle, { color: c.textMuted }]}>{current.subtitle}</Text>
@@ -115,7 +121,7 @@ export default function OnboardingScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { alignItems: 'flex-end', paddingHorizontal: 24, paddingTop: 8 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingTop: 8 },
   skipText: { fontFamily: 'DMSans_500Medium', fontSize: 15, padding: 8 },
   content: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, paddingBottom: 24 },
   iconCircle: { width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center', marginBottom: 32 },
