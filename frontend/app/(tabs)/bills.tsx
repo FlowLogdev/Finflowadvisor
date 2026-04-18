@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useThemeColors } from '@/src/theme';
 import { getBills, createBill, deleteBill, getSettings } from '@/src/api';
 import { Bill, BILL_CATEGORIES, BILL_CATEGORY_COLORS, Settings } from '@/src/types';
+import { ThemeToggle } from '@/src/components/LogoHeader';
 
 export default function BillsScreen() {
   const c = useThemeColors();
@@ -101,8 +102,13 @@ export default function BillsScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: c.background }}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          <Text style={[styles.title, { color: c.textPrimary }]}>Bills</Text>
-          <Text style={[styles.subtitle, { color: c.textMuted }]}>Recurring monthly bills</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <View>
+              <Text style={[styles.title, { color: c.textPrimary }]}>Bills</Text>
+              <Text style={[styles.subtitle, { color: c.textMuted }]}>Recurring monthly bills</Text>
+            </View>
+            <ThemeToggle />
+          </View>
 
           {/* Summary */}
           <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>

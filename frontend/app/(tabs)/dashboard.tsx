@@ -14,6 +14,7 @@ import {
 } from '@/src/api';
 import { DashboardData, SavingsGoal } from '@/src/types';
 import { useAuth } from '@/src/auth';
+import { ThemeToggle } from '@/src/components/LogoHeader';
 
 const SCREEN_W = Dimensions.get('window').width;
 
@@ -128,6 +129,7 @@ export default function DashboardScreen() {
               <Text style={[styles.subtitle, { color: c.textMuted }]}>Your financial overview</Text>
             </View>
             <View style={styles.headerActions}>
+              <ThemeToggle />
               <TouchableOpacity testID="nav-history-btn" onPress={() => router.push('/history')} style={styles.headerIcon}>
                 <Ionicons name="time-outline" size={22} color={c.textMuted} />
               </TouchableOpacity>

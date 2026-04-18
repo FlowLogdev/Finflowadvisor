@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useThemeColors } from '@/src/theme';
 import { getExpenses, createExpense, deleteExpense, toggleRecurring, getSettings } from '@/src/api';
 import { Expense, EXPENSE_CATEGORIES, EXPENSE_CATEGORY_COLORS, Settings } from '@/src/types';
+import { ThemeToggle } from '@/src/components/LogoHeader';
 
 export default function ExpensesScreen() {
   const c = useThemeColors();
@@ -104,8 +105,13 @@ export default function ExpensesScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: c.background }}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          <Text style={[styles.title, { color: c.textPrimary }]}>Expenses</Text>
-          <Text style={[styles.subtitle, { color: c.textMuted }]}>Track daily spending</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <View>
+              <Text style={[styles.title, { color: c.textPrimary }]}>Expenses</Text>
+              <Text style={[styles.subtitle, { color: c.textMuted }]}>Track daily spending</Text>
+            </View>
+            <ThemeToggle />
+          </View>
 
           {/* Summary */}
           <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
