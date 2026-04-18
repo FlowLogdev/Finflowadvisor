@@ -5,8 +5,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useThemeColors } from '@/src/theme';
-import { getMonthlyHistory } from '@/src/api';
+import { useThemeColors } from '../src/theme';
+import { getMonthlyHistory } from '../src/api';
 
 interface MonthSummary {
   month: string; salary: number; currency: string;

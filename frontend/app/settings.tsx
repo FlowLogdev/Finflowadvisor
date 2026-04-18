@@ -6,9 +6,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useTheme, ThemeMode } from '@/src/theme';
-import { getSettings, updateSettings, resetAllData } from '@/src/api';
-import { CURRENCIES } from '@/src/types';
+import { useTheme, ThemeMode } from '../src/theme';
+import { getSettings, updateSettings, resetAllData } from '../src/api';
+import { CURRENCIES } from '../src/types';
 
 export default function SettingsScreen() {
   const { colors: c, mode, setMode } = useTheme();

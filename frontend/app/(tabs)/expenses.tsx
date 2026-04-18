@@ -6,10 +6,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useThemeColors } from '@/src/theme';
-import { getExpenses, createExpense, deleteExpense, toggleRecurring, getSettings } from '@/src/api';
-import { Expense, EXPENSE_CATEGORIES, EXPENSE_CATEGORY_COLORS, Settings } from '@/src/types';
-import { ThemeToggle } from '@/src/components/LogoHeader';
+import { useThemeColors } from '../../src/theme';
+import { getExpenses, createExpense, deleteExpense, toggleRecurring, getSettings } from '../../src/api';
+import { Expense, EXPENSE_CATEGORIES, EXPENSE_CATEGORY_COLORS, Settings } from '../../src/types';
+import { ThemeToggle } from '../../src/components/LogoHeader';
 
 export default function ExpensesScreen() {
   const c = useThemeColors();

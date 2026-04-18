@@ -7,9 +7,9 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { useThemeColors } from '@/src/theme';
-import { getMonthlyDetail } from '@/src/api';
-import { BILL_CATEGORY_COLORS, EXPENSE_CATEGORY_COLORS } from '@/src/types';
+import { useThemeColors } from '../src/theme';
+import { getMonthlyDetail } from '../src/api';
+import { BILL_CATEGORY_COLORS, EXPENSE_CATEGORY_COLORS } from '../src/types';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 

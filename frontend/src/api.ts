@@ -1,4 +1,4 @@
-import { getToken } from '@/src/auth';
+import { getToken } from './auth';
 
 const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 

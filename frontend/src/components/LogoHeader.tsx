@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, ThemeColors } from '@/src/theme';
+import { useTheme, ThemeColors } from '../theme';
 
 export function FinFlowLogo({ size = 52 }: { size?: number }) {
   const { colors: c } = useTheme();

@@ -14,8 +14,8 @@ import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { ThemeProvider, useTheme } from '@/src/theme';
-import { AuthProvider } from '@/src/auth';
+import { ThemeProvider, useTheme } from '../src/theme';
+import { AuthProvider } from '../src/auth';
 
 SplashScreen.preventAutoHideAsync();
 

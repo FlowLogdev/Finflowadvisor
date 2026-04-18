@@ -6,8 +6,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, Rect } from 'react-native-svg';
-import { useThemeColors } from '@/src/theme';
-import { ThemeToggle } from '@/src/components/LogoHeader';
+import { useThemeColors } from '../src/theme';
+import { ThemeToggle } from '../src/components/LogoHeader';
 
 const { width } = Dimensions.get('window');
 

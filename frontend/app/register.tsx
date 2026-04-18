@@ -6,9 +6,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useThemeColors } from '@/src/theme';
-import { useAuth } from '@/src/auth';
-import { FinFlowLogo } from '@/src/components/LogoHeader';
+import { useThemeColors } from '../src/theme';
+import { useAuth } from '../src/auth';
+import { FinFlowLogo } from '../src/components/LogoHeader';
 
 export default function RegisterScreen() {
   const c = useThemeColors();

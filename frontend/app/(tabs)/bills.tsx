@@ -6,10 +6,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useThemeColors } from '@/src/theme';
-import { getBills, createBill, deleteBill, getSettings } from '@/src/api';
-import { Bill, BILL_CATEGORIES, BILL_CATEGORY_COLORS, Settings } from '@/src/types';
-import { ThemeToggle } from '@/src/components/LogoHeader';
+import { useThemeColors } from '../../src/theme';
+import { getBills, createBill, deleteBill, getSettings } from '../../src/api';
+import { Bill, BILL_CATEGORIES, BILL_CATEGORY_COLORS, Settings } from '../../src/types';
+import { ThemeToggle } from '../../src/components/LogoHeader';
 
 export default function BillsScreen() {
   const c = useThemeColors();

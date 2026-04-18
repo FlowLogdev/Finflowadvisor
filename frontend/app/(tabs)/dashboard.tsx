@@ -8,13 +8,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { PieChart } from 'react-native-chart-kit';
-import { useThemeColors } from '@/src/theme';
+import { useThemeColors } from '../../src/theme';
 import {
   getDashboard, createSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
-} from '@/src/api';
-import { DashboardData, SavingsGoal } from '@/src/types';
-import { useAuth } from '@/src/auth';
-import { ThemeToggle } from '@/src/components/LogoHeader';
+} from '../../src/api';
+import { DashboardData, SavingsGoal } from '../../src/types';
+import { useAuth } from '../../src/auth';
+import { ThemeToggle } from '../../src/components/LogoHeader';
 
 const SCREEN_W = Dimensions.get('window').width;
 

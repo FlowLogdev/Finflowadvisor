@@ -5,10 +5,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
-import { useThemeColors } from '@/src/theme';
-import { getSettings, updateSettings } from '@/src/api';
-import { CURRENCIES, Settings } from '@/src/types';
-import { LogoHeader } from '@/src/components/LogoHeader';
+import { useThemeColors } from '../../src/theme';
+import { getSettings, updateSettings } from '../../src/api';
+import { CURRENCIES, Settings } from '../../src/types';
+import { LogoHeader } from '../../src/components/LogoHeader';
 
 export default function SetupScreen() {
   const c = useThemeColors();
