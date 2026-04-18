@@ -1,26 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Redirect } from 'expo-router';
 import { View, ActivityIndicator } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { processRecurring } from '@/src/api';
 import { useThemeColors } from '@/src/theme';
+import { useAuth } from '@/src/auth';
 
 export default function Index() {
   const c = useThemeColors();
-  const [ready, setReady] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const { user, loading } = useAuth();
 
-  useEffect(() => {
-    (async () => {
-      const done = await AsyncStorage.getItem('finflow_onboarding_complete');
-      setShowOnboarding(done !== 'true');
-      // process recurring expenses on app start
-      try { await processRecurring(); } catch (_) {}
-      setReady(true);
-    })();
-  }, []);
-
-  if (!ready) {
+  if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: c.background }}>
         <ActivityIndicator size="large" color={c.income} />
@@ -28,6 +16,9 @@ export default function Index() {
     );
   }
 
-  if (showOnboarding) return <Redirect href="/onboarding" />;
-  return <Redirect href="/(tabs)/setup" />;
+  // Authenticated → go to dashboard tabs
+  if (user) return <Redirect href="/(tabs)/setup" />;
+
+  // Not authenticated → show landing page
+  return <Redirect href="/landing" />;
 }

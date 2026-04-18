@@ -13,12 +13,14 @@ import {
   getDashboard, createSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
 } from '@/src/api';
 import { DashboardData, SavingsGoal } from '@/src/types';
+import { useAuth } from '@/src/auth';
 
 const SCREEN_W = Dimensions.get('window').width;
 
 export default function DashboardScreen() {
   const c = useThemeColors();
   const router = useRouter();
+  const { logout } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [showGoalForm, setShowGoalForm] = useState(false);
@@ -131,6 +133,9 @@ export default function DashboardScreen() {
               </TouchableOpacity>
               <TouchableOpacity testID="nav-settings-btn" onPress={() => router.push('/settings')} style={styles.headerIcon}>
                 <Ionicons name="cog-outline" size={22} color={c.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity testID="logout-btn" onPress={async () => { await logout(); router.replace('/landing'); }} style={styles.headerIcon}>
+                <Ionicons name="log-out-outline" size={22} color={c.expense} />
               </TouchableOpacity>
             </View>
           </View>

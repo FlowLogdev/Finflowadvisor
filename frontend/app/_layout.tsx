@@ -15,6 +15,7 @@ import { ActivityIndicator, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { ThemeProvider, useTheme } from '@/src/theme';
+import { AuthProvider } from '@/src/auth';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -26,6 +27,9 @@ function InnerLayout() {
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
+        <Stack.Screen name="landing" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="login" />
+        <Stack.Screen name="register" />
         <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
@@ -60,7 +64,9 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider>
-      <InnerLayout />
+      <AuthProvider>
+        <InnerLayout />
+      </AuthProvider>
     </ThemeProvider>
   );
 }
