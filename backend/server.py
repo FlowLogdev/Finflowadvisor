@@ -315,7 +315,7 @@ async def get_monthly_history(user: dict = Depends(get_current_user)):
     sal = settings.get("salary", 0) if settings else 0
     cur = settings.get("currency", "$") if settings else "$"
     bills = await db.bills.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
-    expenses = await db.expenses.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(10000)
+    expenses = await db.expenses.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
     tb = sum(b["amount"] for b in bills)
     months: dict = {}
     for e in expenses:
@@ -333,7 +333,7 @@ async def get_monthly_detail(month: str, user: dict = Depends(get_current_user))
     sal = settings.get("salary", 0) if settings else 0
     cur = settings.get("currency", "$") if settings else "$"
     bills = await db.bills.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
-    expenses = await db.expenses.find({"user_id": uid, "date": {"$regex": f"^{month}"}}, {"_id": 0, "user_id": 0}).to_list(10000)
+    expenses = await db.expenses.find({"user_id": uid, "date": {"$regex": f"^{month}"}}, {"_id": 0, "user_id": 0}).to_list(1000)
     tb = sum(b["amount"] for b in bills)
     te = sum(e["amount"] for e in expenses)
     ec: dict = {}
