@@ -11,6 +11,7 @@ import { PieChart } from 'react-native-chart-kit';
 import { useThemeColors } from '../../src/theme';
 import {
   getDashboard, createSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
+  aiAdvisorInsight,
 } from '../../src/api';
 import { DashboardData, SavingsGoal } from '../../src/types';
 import { useAuth } from '../../src/auth';
@@ -24,6 +25,8 @@ export default function DashboardScreen() {
   const { logout } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [aiInsight, setAiInsight] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalName, setGoalName] = useState('');
   const [goalTarget, setGoalTarget] = useState('');
@@ -43,6 +46,17 @@ export default function DashboardScreen() {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+    // Fetch AI insight separately (don't block dashboard render on it)
+    setAiLoading(true);
+    try {
+      const res = await aiAdvisorInsight();
+      setAiInsight(res.insight);
+    } catch (e) {
+      // silently fail — insight is an optional enhancement
+      setAiInsight(null);
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -151,6 +165,33 @@ export default function DashboardScreen() {
             <MetricCard label="Expenses" value={`${cur}${total_expenses.toLocaleString()}`} color={c.warning} c={c} icon="card-outline" />
             <MetricCard label="Net Left" value={`${cur}${net_remaining.toLocaleString()}`} color={net_remaining >= 0 ? c.income : c.expense} c={c} icon="trending-up-outline" />
           </View>
+
+          {/* ── AI Daily Insight (FinBot) ── */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => router.push('/(tabs)/advisor')}
+            style={[styles.aiCard, { backgroundColor: c.surface, borderColor: c.income }]}
+          >
+            <View style={[styles.aiIconBubble, { backgroundColor: c.income }]}>
+              <Ionicons name="sparkles" size={16} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={styles.aiHeader}>
+                <Text style={[styles.aiTitle, { color: c.textPrimary }]}>FinBot · Today's Tip</Text>
+                <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
+              </View>
+              {aiLoading ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  <ActivityIndicator size="small" color={c.income} />
+                  <Text style={[styles.aiBody, { color: c.textMuted }]}>Generating today's tip…</Text>
+                </View>
+              ) : (
+                <Text style={[styles.aiBody, { color: c.textPrimary }]}>
+                  {aiInsight || 'Tap to chat with FinBot for personalized money advice.'}
+                </Text>
+              )}
+            </View>
+          </TouchableOpacity>
 
           {/* ── Smart Tip ── */}
           <View style={[styles.tipCard, { backgroundColor: c.surfaceSecondary, borderColor: c.border }]}>
@@ -380,6 +421,19 @@ const styles = StyleSheet.create({
   // Tip
   tipCard: { borderRadius: 12, borderWidth: 0.5, padding: 16, flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 24 },
   tipText: { fontFamily: 'DMSans_400Regular', fontSize: 14, lineHeight: 20, flex: 1 },
+
+  // AI Insight card
+  aiCard: {
+    borderRadius: 12, borderWidth: 1, padding: 14,
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 12,
+  },
+  aiIconBubble: {
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  aiHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  aiTitle: { fontFamily: 'DMSans_600SemiBold', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5 },
+  aiBody: { fontFamily: 'DMSans_400Regular', fontSize: 14, lineHeight: 20, marginTop: 4 },
 
   // Budget bars
   budgetItem: { marginBottom: 14 },

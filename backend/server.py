@@ -377,6 +377,199 @@ async def reset_all_data(user: dict = Depends(get_current_user)):
 async def health():
     return {"status": "healthy"}
 
+# ── AI Advisor (LLM-powered personal finance coach) ────────────────
+
+from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+ADVISOR_MODEL_PROVIDER = "openai"
+ADVISOR_MODEL_NAME = "gpt-4.1-mini"  # cost-efficient, high quality for chat
+
+class AdvisorChatInput(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+
+async def _build_financial_context(user_id: str) -> str:
+    """Fetch user's financial snapshot and format for LLM context."""
+    settings = await db.settings.find_one({"user_id": user_id}) or {}
+    bills = await db.bills.find({"user_id": user_id}).to_list(length=100)
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    expenses = await db.expenses.find({
+        "user_id": user_id,
+        "date": {"$gte": month_start.isoformat()}
+    }).to_list(length=500)
+
+    salary = settings.get("salary", 0)
+    currency = settings.get("currency", "$")
+    pct_needs = settings.get("pctNeeds", 50)
+    pct_wants = settings.get("pctWants", 30)
+    pct_savings = settings.get("pctSavings", 20)
+
+    total_bills = sum(b.get("amount", 0) for b in bills)
+    total_expenses = sum(e.get("amount", 0) for e in expenses)
+
+    # Group expenses by category
+    cat_totals: dict = {}
+    for e in expenses:
+        cat = e.get("category", "Other")
+        cat_totals[cat] = cat_totals.get(cat, 0) + e.get("amount", 0)
+    top_cats = sorted(cat_totals.items(), key=lambda x: -x[1])[:5]
+
+    bill_lines = "\n".join([f"  - {b.get('name','')} ({b.get('category','')}): {currency}{b.get('amount',0):.2f} on day {b.get('dueDay','?')}" for b in bills[:10]]) or "  (none)"
+    cat_lines = "\n".join([f"  - {c}: {currency}{a:.2f}" for c, a in top_cats]) or "  (none yet this month)"
+
+    return f"""USER FINANCIAL SNAPSHOT (current month: {now.strftime('%B %Y')}):
+
+Monthly Net Salary: {currency}{salary:.2f}
+Currency: {currency}
+Budget Split Target: {pct_needs}% Needs / {pct_wants}% Wants / {pct_savings}% Savings
+
+RECURRING BILLS (total {currency}{total_bills:.2f}/mo):
+{bill_lines}
+
+THIS MONTH'S EXPENSES SO FAR (total {currency}{total_expenses:.2f}):
+Top categories:
+{cat_lines}
+
+Remaining disposable after bills: {currency}{max(salary - total_bills, 0):.2f}
+"""
+
+ADVISOR_SYSTEM_PROMPT = """You are FinBot, a friendly, concise personal-finance coach built into the FinFlow app.
+
+You help users budget smarter using the 50/30/20 rule (Needs/Wants/Savings), reduce spending, build savings, and make smart money decisions.
+
+GUIDELINES:
+- Keep responses under 180 words unless a detailed plan is explicitly requested.
+- Use the user's actual financial data (provided in context) — refer to specific numbers and categories.
+- Be warm, practical, and non-judgmental. Never shame the user about their spending.
+- Give concrete, actionable steps (e.g., "Meal-prep 3x/week could save ~$120/mo").
+- Use the user's currency symbol shown in context.
+- When giving numbers, be realistic — don't over-promise.
+- Format with short paragraphs, bullet points, or numbered steps for clarity.
+- If the user asks something unrelated to personal finance, politely redirect.
+- Never give legal, tax, or investment-advice disclaimers unless the user asks specifically about investing/taxes."""
+
+@api_router.post("/ai-advisor/chat")
+async def ai_advisor_chat(data: AdvisorChatInput, user: dict = Depends(get_current_user)):
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=500, detail="AI Advisor not configured")
+    if not data.message or not data.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    user_id = user["_id"]
+    session_id = data.session_id or str(uuid.uuid4())
+
+    # Store user message
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.ai_messages.insert_one({
+        "user_id": user_id,
+        "session_id": session_id,
+        "role": "user",
+        "content": data.message.strip(),
+        "timestamp": now_iso,
+    })
+
+    # Build context from user's financial data
+    financial_ctx = await _build_financial_context(user_id)
+    system_msg = f"{ADVISOR_SYSTEM_PROMPT}\n\n{financial_ctx}"
+
+    # Fetch recent conversation history (last 10 messages of this session)
+    history_docs = await db.ai_messages.find({
+        "user_id": user_id,
+        "session_id": session_id,
+    }).sort("timestamp", 1).to_list(length=20)
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=session_id,
+            system_message=system_msg,
+        ).with_model(ADVISOR_MODEL_PROVIDER, ADVISOR_MODEL_NAME)
+
+        # Replay history (emergentintegrations manages conversation state per session_id internally,
+        # but we send the latest user message explicitly)
+        reply = await chat.send_message(UserMessage(text=data.message.strip()))
+
+        reply_text = str(reply) if reply else "I'm sorry, I couldn't generate a response. Please try again."
+    except Exception as e:
+        logger.exception("AI Advisor error")
+        raise HTTPException(status_code=500, detail=f"AI error: {str(e)[:200]}")
+
+    # Store assistant reply
+    await db.ai_messages.insert_one({
+        "user_id": user_id,
+        "session_id": session_id,
+        "role": "assistant",
+        "content": reply_text,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {"session_id": session_id, "reply": reply_text}
+
+
+@api_router.get("/ai-advisor/history")
+async def ai_advisor_history(session_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    user_id = user["_id"]
+    query = {"user_id": user_id}
+    if session_id:
+        query["session_id"] = session_id
+    docs = await db.ai_messages.find(query).sort("timestamp", 1).to_list(length=200)
+    for d in docs:
+        d["_id"] = str(d["_id"])
+    return {"messages": docs}
+
+
+@api_router.delete("/ai-advisor/history")
+async def ai_advisor_clear_history(user: dict = Depends(get_current_user)):
+    user_id = user["_id"]
+    result = await db.ai_messages.delete_many({"user_id": user_id})
+    return {"deleted": result.deleted_count}
+
+
+@api_router.get("/ai-advisor/insight")
+async def ai_advisor_daily_insight(user: dict = Depends(get_current_user)):
+    """Generate a short, personalized daily money tip based on user's current data."""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=500, detail="AI Advisor not configured")
+    user_id = user["_id"]
+
+    # Check if we already have today's insight cached
+    today_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cached = await db.ai_insights.find_one({"user_id": user_id, "date": today_key})
+    if cached:
+        return {"insight": cached["content"], "cached": True}
+
+    financial_ctx = await _build_financial_context(user_id)
+    system_msg = (
+        "You are FinBot, a personal finance coach. Generate ONE short, punchy, actionable money tip "
+        "(under 50 words) tailored to the user's financial snapshot. Reference specific numbers. "
+        "Be encouraging and warm. Do not greet or say 'hello'. Start directly with the insight."
+    )
+    prompt = f"{financial_ctx}\n\nGenerate today's money tip:"
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"insight-{user_id}-{today_key}",
+            system_message=system_msg,
+        ).with_model(ADVISOR_MODEL_PROVIDER, ADVISOR_MODEL_NAME)
+        reply = await chat.send_message(UserMessage(text=prompt))
+        insight_text = str(reply).strip() if reply else "Track your expenses daily — small leaks sink big ships."
+    except Exception as e:
+        logger.exception("Insight error")
+        # Fallback insight so UI never breaks
+        insight_text = "Track your expenses daily — small leaks sink big ships. Open the Expenses tab to log today's spending."
+
+    await db.ai_insights.insert_one({
+        "user_id": user_id,
+        "date": today_key,
+        "content": insight_text,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"insight": insight_text, "cached": False}
+
+
 # ── App setup ───────────────────────────────────────────────────────
 
 app.include_router(api_router)

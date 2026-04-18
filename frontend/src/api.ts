@@ -1,9 +1,22 @@
 import { getToken } from './auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 
+async function resolveToken(): Promise<string | null> {
+  // Prefer in-memory (fast path after login)
+  const t = getToken();
+  if (t) return t;
+  // Fallback: read from AsyncStorage (handles direct page navigation / reload before AuthProvider hydrates)
+  try {
+    return await AsyncStorage.getItem('finflow_token');
+  } catch {
+    return null;
+  }
+}
+
 async function api<T = any>(path: string, options?: RequestInit): Promise<T> {
-  const token = getToken();
+  const token = await resolveToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE_URL}${path}`, { headers, ...options });
@@ -32,3 +45,17 @@ export const getMonthlyHistory = () => api('/api/monthly-history');
 export const getMonthlyDetail = (month: string) => api(`/api/monthly-detail/${month}`);
 export const processRecurring = () => api('/api/process-recurring', { method: 'POST' });
 export const resetAllData = () => api('/api/reset', { method: 'POST' });
+// ── AI Advisor ──────────────────────────────────────────────
+export const aiAdvisorChat = (message: string, session_id?: string) =>
+  api<{ session_id: string; reply: string }>('/api/ai-advisor/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, session_id }),
+  });
+export const aiAdvisorHistory = (session_id?: string) =>
+  api<{ messages: Array<{ _id: string; role: 'user' | 'assistant'; content: string; timestamp: string; session_id: string }> }>(
+    session_id ? `/api/ai-advisor/history?session_id=${encodeURIComponent(session_id)}` : '/api/ai-advisor/history'
+  );
+export const aiAdvisorClearHistory = () =>
+  api<{ deleted: number }>('/api/ai-advisor/history', { method: 'DELETE' });
+export const aiAdvisorInsight = () =>
+  api<{ insight: string; cached: boolean }>('/api/ai-advisor/insight');

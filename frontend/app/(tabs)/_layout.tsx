@@ -62,6 +62,15 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="advisor"
+        options={{
+          title: 'AI Advisor',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="sparkles-outline" size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }
