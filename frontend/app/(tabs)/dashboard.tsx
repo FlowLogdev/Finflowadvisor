@@ -9,6 +9,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { PieChart } from 'react-native-chart-kit';
 import { useThemeColors } from '../../src/theme';
+import { useI18n } from '../../src/i18n';
 import {
   getDashboard, createSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
   aiAdvisorInsight,
@@ -16,12 +17,14 @@ import {
 import { DashboardData, SavingsGoal } from '../../src/types';
 import { useAuth } from '../../src/auth';
 import { ThemeToggle } from '../../src/components/LogoHeader';
+import { MarketsCard, WatchlistCard } from '../../src/components/MarketsCards';
 
 const SCREEN_W = Dimensions.get('window').width;
 
 export default function DashboardScreen() {
   const c = useThemeColors();
   const router = useRouter();
+  const { t } = useI18n();
   const { logout } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -139,8 +142,8 @@ export default function DashboardScreen() {
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <View style={styles.dashHeader}>
             <View>
-              <Text style={[styles.title, { color: c.textPrimary }]}>Dashboard</Text>
-              <Text style={[styles.subtitle, { color: c.textMuted }]}>Your financial overview</Text>
+              <Text style={[styles.title, { color: c.textPrimary }]}>{t('dashboard.title')}</Text>
+              <Text style={[styles.subtitle, { color: c.textMuted }]}>{t('dashboard.subtitle')}</Text>
             </View>
             <View style={styles.headerActions}>
               <ThemeToggle />
@@ -158,12 +161,12 @@ export default function DashboardScreen() {
 
           {/* ── Metric Cards ── */}
           <View style={styles.metricsRow}>
-            <MetricCard label="Salary" value={`${cur}${settings.salary.toLocaleString()}`} color={c.income} c={c} icon="wallet-outline" />
-            <MetricCard label="Bills" value={`${cur}${total_bills.toLocaleString()}`} color={c.expense} c={c} icon="receipt-outline" />
+            <MetricCard label={t('dashboard.salary')} value={`${cur}${settings.salary.toLocaleString()}`} color={c.income} c={c} icon="wallet-outline" />
+            <MetricCard label={t('dashboard.bills')} value={`${cur}${total_bills.toLocaleString()}`} color={c.expense} c={c} icon="receipt-outline" />
           </View>
           <View style={styles.metricsRow}>
-            <MetricCard label="Expenses" value={`${cur}${total_expenses.toLocaleString()}`} color={c.warning} c={c} icon="card-outline" />
-            <MetricCard label="Net Left" value={`${cur}${net_remaining.toLocaleString()}`} color={net_remaining >= 0 ? c.income : c.expense} c={c} icon="trending-up-outline" />
+            <MetricCard label={t('dashboard.expenses')} value={`${cur}${total_expenses.toLocaleString()}`} color={c.warning} c={c} icon="card-outline" />
+            <MetricCard label={t('dashboard.netLeft')} value={`${cur}${net_remaining.toLocaleString()}`} color={net_remaining >= 0 ? c.income : c.expense} c={c} icon="trending-up-outline" />
           </View>
 
           {/* ── AI Daily Insight (FinBot) ── */}
@@ -177,21 +180,25 @@ export default function DashboardScreen() {
             </View>
             <View style={{ flex: 1 }}>
               <View style={styles.aiHeader}>
-                <Text style={[styles.aiTitle, { color: c.textPrimary }]}>FinBot · Today's Tip</Text>
+                <Text style={[styles.aiTitle, { color: c.textPrimary }]}>{t('dashboard.finbotTip')}</Text>
                 <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
               </View>
               {aiLoading ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
                   <ActivityIndicator size="small" color={c.income} />
-                  <Text style={[styles.aiBody, { color: c.textMuted }]}>Generating today's tip…</Text>
+                  <Text style={[styles.aiBody, { color: c.textMuted }]}>{t('dashboard.generatingTip')}</Text>
                 </View>
               ) : (
                 <Text style={[styles.aiBody, { color: c.textPrimary }]}>
-                  {aiInsight || 'Tap to chat with FinBot for personalized money advice.'}
+                  {aiInsight || t('dashboard.finbotPrompt')}
                 </Text>
               )}
             </View>
           </TouchableOpacity>
+
+          {/* ── Live Markets (FX + Stocks) ── */}
+          <MarketsCard />
+          <WatchlistCard />
 
           {/* ── Smart Tip ── */}
           <View style={[styles.tipCard, { backgroundColor: c.surfaceSecondary, borderColor: c.border }]}>

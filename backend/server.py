@@ -380,14 +380,19 @@ async def health():
 # ── AI Advisor (LLM-powered personal finance coach) ────────────────
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+import httpx
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
 ADVISOR_MODEL_PROVIDER = "openai"
 ADVISOR_MODEL_NAME = "gpt-4.1-mini"  # cost-efficient, high quality for chat
+
+LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "pt-BR": "Brazilian Portuguese"}
 
 class AdvisorChatInput(BaseModel):
     message: str
     session_id: Optional[str] = None
+    language: Optional[str] = "en"
 
 async def _build_financial_context(user_id: str) -> str:
     """Fetch user's financial snapshot and format for LLM context."""
@@ -450,6 +455,12 @@ GUIDELINES:
 - If the user asks something unrelated to personal finance, politely redirect.
 - Never give legal, tax, or investment-advice disclaimers unless the user asks specifically about investing/taxes."""
 
+def _lang_directive(lang: Optional[str]) -> str:
+    name = LANGUAGE_NAMES.get(lang or "en", "English")
+    if name == "English":
+        return ""
+    return f"\n\nIMPORTANT: Respond in {name}. All of your reply text must be in {name}."
+
 @api_router.post("/ai-advisor/chat")
 async def ai_advisor_chat(data: AdvisorChatInput, user: dict = Depends(get_current_user)):
     if not EMERGENT_LLM_KEY:
@@ -472,13 +483,7 @@ async def ai_advisor_chat(data: AdvisorChatInput, user: dict = Depends(get_curre
 
     # Build context from user's financial data
     financial_ctx = await _build_financial_context(user_id)
-    system_msg = f"{ADVISOR_SYSTEM_PROMPT}\n\n{financial_ctx}"
-
-    # Fetch recent conversation history (last 10 messages of this session)
-    history_docs = await db.ai_messages.find({
-        "user_id": user_id,
-        "session_id": session_id,
-    }).sort("timestamp", 1).to_list(length=20)
+    system_msg = f"{ADVISOR_SYSTEM_PROMPT}\n\n{financial_ctx}{_lang_directive(data.language)}"
 
     try:
         chat = LlmChat(
@@ -487,10 +492,7 @@ async def ai_advisor_chat(data: AdvisorChatInput, user: dict = Depends(get_curre
             system_message=system_msg,
         ).with_model(ADVISOR_MODEL_PROVIDER, ADVISOR_MODEL_NAME)
 
-        # Replay history (emergentintegrations manages conversation state per session_id internally,
-        # but we send the latest user message explicitly)
         reply = await chat.send_message(UserMessage(text=data.message.strip()))
-
         reply_text = str(reply) if reply else "I'm sorry, I couldn't generate a response. Please try again."
     except Exception as e:
         logger.exception("AI Advisor error")
@@ -568,6 +570,176 @@ async def ai_advisor_daily_insight(user: dict = Depends(get_current_user)):
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     return {"insight": insight_text, "cached": False}
+
+
+# ── Markets: FX rates & Stock quotes ──────────────────────────────
+
+_fx_cache: dict = {"ts": 0, "data": None}
+_fx_cache_ttl = 900  # 15 min
+_stock_cache: dict = {}  # symbol -> {ts, data}
+_stock_cache_ttl = 300  # 5 min
+
+DEFAULT_FX_PAIRS = [
+    ("USD", "BRL"), ("USD", "EUR"), ("USD", "GBP"),
+    ("USD", "JPY"), ("USD", "CAD"), ("USD", "AUD"),
+    ("EUR", "USD"), ("BRL", "USD"),
+]
+
+DEFAULT_STOCK_SYMBOLS = ["AAPL", "GOOGL", "MSFT", "TSLA", "NVDA", "AMZN", "META"]
+
+
+@api_router.get("/markets/fx")
+async def get_fx_rates(user: dict = Depends(get_current_user)):
+    """Live currency exchange rates via Frankfurter.dev (free, no key, ECB data)."""
+    import time
+    now = time.time()
+    if _fx_cache["data"] and (now - _fx_cache["ts"]) < _fx_cache_ttl:
+        return {"rates": _fx_cache["data"], "cached": True}
+
+    results = []
+    # Frankfurter needs separate requests per base currency. Batch by base.
+    bases = {}
+    for base, quote in DEFAULT_FX_PAIRS:
+        bases.setdefault(base, []).append(quote)
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as http:
+            for base, quotes in bases.items():
+                symbols = ",".join(quotes)
+                try:
+                    r = await http.get(f"https://api.frankfurter.dev/v1/latest?base={base}&symbols={symbols}")
+                    if r.status_code == 200:
+                        data = r.json()
+                        rates = data.get("rates", {})
+                        for q in quotes:
+                            if q in rates:
+                                results.append({
+                                    "base": base,
+                                    "quote": q,
+                                    "rate": rates[q],
+                                    "date": data.get("date"),
+                                })
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.exception("FX error")
+        raise HTTPException(status_code=503, detail=f"FX service unavailable: {str(e)[:100]}")
+
+    if not results:
+        raise HTTPException(status_code=503, detail="Could not fetch FX rates right now")
+
+    _fx_cache["data"] = results
+    _fx_cache["ts"] = now
+    return {"rates": results, "cached": False}
+
+
+async def _fetch_stock_quote(http: httpx.AsyncClient, symbol: str) -> Optional[dict]:
+    """Finnhub quote endpoint. c=current, d=diff, dp=diffPct, pc=prev close, h/l=day high/low."""
+    import time
+    cached = _stock_cache.get(symbol)
+    now = time.time()
+    if cached and (now - cached["ts"]) < _stock_cache_ttl:
+        return cached["data"]
+    if not FINNHUB_API_KEY:
+        return None
+    try:
+        r = await http.get(
+            "https://finnhub.io/api/v1/quote",
+            params={"symbol": symbol, "token": FINNHUB_API_KEY},
+        )
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        # Finnhub returns all zeros for unknown symbols
+        if not j or not j.get("c"):
+            return None
+        data = {
+            "symbol": symbol,
+            "price": j.get("c"),
+            "change": j.get("d"),
+            "changePercent": j.get("dp"),
+            "high": j.get("h"),
+            "low": j.get("l"),
+            "prevClose": j.get("pc"),
+        }
+        _stock_cache[symbol] = {"ts": now, "data": data}
+        return data
+    except Exception:
+        return None
+
+
+@api_router.get("/markets/stocks")
+async def get_stock_quotes(symbols: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Get stock quotes for a list of symbols (comma-separated). Defaults to user's watchlist or popular stocks."""
+    sym_list: list = []
+    if symbols:
+        sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    else:
+        # Load user watchlist
+        user_id = user["_id"]
+        wl_docs = await db.watchlist.find({"user_id": user_id}).to_list(length=50)
+        if wl_docs:
+            sym_list = [d["symbol"] for d in wl_docs]
+        else:
+            sym_list = DEFAULT_STOCK_SYMBOLS[:5]
+
+    if not sym_list:
+        return {"quotes": []}
+    if len(sym_list) > 20:
+        sym_list = sym_list[:20]
+
+    quotes = []
+    async with httpx.AsyncClient(timeout=8.0) as http:
+        import asyncio
+        results = await asyncio.gather(*[_fetch_stock_quote(http, s) for s in sym_list], return_exceptions=True)
+        for r in results:
+            if isinstance(r, dict):
+                quotes.append(r)
+    return {"quotes": quotes}
+
+
+class WatchlistInput(BaseModel):
+    symbol: str
+
+
+@api_router.get("/watchlist")
+async def list_watchlist(user: dict = Depends(get_current_user)):
+    user_id = user["_id"]
+    docs = await db.watchlist.find({"user_id": user_id}).sort("created_at", 1).to_list(length=50)
+    return [{"id": str(d["_id"]), "symbol": d["symbol"]} for d in docs]
+
+
+@api_router.post("/watchlist")
+async def add_watchlist(data: WatchlistInput, user: dict = Depends(get_current_user)):
+    symbol = (data.symbol or "").strip().upper()
+    if not symbol or len(symbol) > 10:
+        raise HTTPException(status_code=400, detail="Invalid symbol")
+    user_id = user["_id"]
+    # de-dupe
+    existing = await db.watchlist.find_one({"user_id": user_id, "symbol": symbol})
+    if existing:
+        return {"id": str(existing["_id"]), "symbol": symbol}
+    # Verify symbol exists via Finnhub before adding
+    if FINNHUB_API_KEY:
+        async with httpx.AsyncClient(timeout=6.0) as http:
+            quote = await _fetch_stock_quote(http, symbol)
+            if not quote:
+                raise HTTPException(status_code=400, detail=f"Unknown stock symbol: {symbol}")
+    res = await db.watchlist.insert_one({
+        "user_id": user_id,
+        "symbol": symbol,
+        "created_at": datetime.now(timezone.utc),
+    })
+    return {"id": str(res.inserted_id), "symbol": symbol}
+
+
+@api_router.delete("/watchlist/{symbol}")
+async def remove_watchlist(symbol: str, user: dict = Depends(get_current_user)):
+    user_id = user["_id"]
+    res = await db.watchlist.delete_one({"user_id": user_id, "symbol": symbol.strip().upper()})
+    if not res.deleted_count:
+        raise HTTPException(status_code=404, detail="Not in watchlist")
+    return {"deleted": True}
 
 
 # ── App setup ───────────────────────────────────────────────────────

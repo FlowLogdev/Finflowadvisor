@@ -46,10 +46,10 @@ export const getMonthlyDetail = (month: string) => api(`/api/monthly-detail/${mo
 export const processRecurring = () => api('/api/process-recurring', { method: 'POST' });
 export const resetAllData = () => api('/api/reset', { method: 'POST' });
 // ── AI Advisor ──────────────────────────────────────────────
-export const aiAdvisorChat = (message: string, session_id?: string) =>
+export const aiAdvisorChat = (message: string, session_id?: string, language?: string) =>
   api<{ session_id: string; reply: string }>('/api/ai-advisor/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, session_id }),
+    body: JSON.stringify({ message, session_id, language }),
   });
 export const aiAdvisorHistory = (session_id?: string) =>
   api<{ messages: Array<{ _id: string; role: 'user' | 'assistant'; content: string; timestamp: string; session_id: string }> }>(
@@ -59,3 +59,19 @@ export const aiAdvisorClearHistory = () =>
   api<{ deleted: number }>('/api/ai-advisor/history', { method: 'DELETE' });
 export const aiAdvisorInsight = () =>
   api<{ insight: string; cached: boolean }>('/api/ai-advisor/insight');
+
+// ── Markets ──────────────────────────────────────────────
+export type FxRate = { base: string; quote: string; rate: number; date: string };
+export type StockQuote = {
+  symbol: string; price: number; change: number; changePercent: number;
+  high: number; low: number; prevClose: number;
+};
+
+export const getFxRates = () => api<{ rates: FxRate[]; cached: boolean }>('/api/markets/fx');
+export const getStockQuotes = (symbols?: string) =>
+  api<{ quotes: StockQuote[] }>(symbols ? `/api/markets/stocks?symbols=${encodeURIComponent(symbols)}` : '/api/markets/stocks');
+export const getWatchlist = () => api<Array<{ id: string; symbol: string }>>('/api/watchlist');
+export const addToWatchlist = (symbol: string) =>
+  api<{ id: string; symbol: string }>('/api/watchlist', { method: 'POST', body: JSON.stringify({ symbol }) });
+export const removeFromWatchlist = (symbol: string) =>
+  api<{ deleted: boolean }>(`/api/watchlist/${encodeURIComponent(symbol)}`, { method: 'DELETE' });

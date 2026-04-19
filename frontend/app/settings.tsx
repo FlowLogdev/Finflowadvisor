@@ -7,11 +7,13 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme, ThemeMode } from '../src/theme';
+import { useI18n, LANGUAGES, LanguageCode } from '../src/i18n';
 import { getSettings, updateSettings, resetAllData } from '../src/api';
 import { CURRENCIES } from '../src/types';
 
 export default function SettingsScreen() {
   const { colors: c, mode, setMode } = useTheme();
+  const { t, language, setLanguage } = useI18n();
   const router = useRouter();
   const [currency, setCurrency] = useState('$');
 
@@ -62,8 +64,32 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* Language */}
+        <Text style={[styles.sectionLabel, { color: c.textMuted }]}>{t('settings.language')}</Text>
+        <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+          <View style={styles.modeRow}>
+            {LANGUAGES.map((L) => (
+              <TouchableOpacity
+                key={L.code}
+                testID={`lang-${L.code}-btn`}
+                onPress={() => setLanguage(L.code as LanguageCode)}
+                style={[
+                  styles.modePill,
+                  {
+                    backgroundColor: language === L.code ? c.income : c.surfaceSecondary,
+                    borderColor: language === L.code ? c.income : c.border,
+                  },
+                ]}
+              >
+                <Text style={{ fontSize: 16 }}>{L.emoji}</Text>
+                <Text style={[styles.modeText, { color: language === L.code ? '#fff' : c.textPrimary }]}>{L.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
         {/* Theme */}
-        <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Appearance</Text>
+        <Text style={[styles.sectionLabel, { color: c.textMuted }]}>{t('settings.appearance')}</Text>
         <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
           <View style={styles.modeRow}>
             {MODES.map((m) => (

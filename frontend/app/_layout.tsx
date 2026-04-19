@@ -16,6 +16,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { AuthProvider } from '../src/auth';
+import { I18nProvider } from '../src/i18n';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -64,9 +65,11 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <InnerLayout />
-      </AuthProvider>
+      <I18nProvider>
+        <AuthProvider>
+          <InnerLayout />
+        </AuthProvider>
+      </I18nProvider>
     </ThemeProvider>
   );
 }

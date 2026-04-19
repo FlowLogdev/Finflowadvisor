@@ -291,6 +291,39 @@ agent_communication:
 
       Credentials are in /app/memory/test_credentials.md.
       Do NOT test frontend screens this iteration — those will be verified by the user visually.
+
+  - agent: "main"
+    message: |
+      Phase 2 complete — shipped 3 big features:
+
+      1. **Markets (FX rates)**: new GET /api/markets/fx endpoint returns live currency rates
+         from Frankfurter.dev (free, ECB-sourced). 8 pairs: USD→BRL, USD→EUR, USD→GBP, USD→JPY,
+         USD→CAD, USD→AUD, EUR→USD, BRL→USD. 15-min cache.
+
+      2. **Stocks (Finnhub quotes + watchlist)**: new endpoints
+         - GET /api/markets/stocks?symbols=AAPL,GOOGL — batch quotes via Finnhub (FINNHUB_API_KEY in .env).
+           5-min per-symbol cache.
+         - GET /api/watchlist — user's symbols
+         - POST /api/watchlist {symbol} — adds (verifies symbol exists via Finnhub first). 400 on unknown.
+         - DELETE /api/watchlist/{symbol}
+         All user-scoped, JWT-required.
+
+      3. **AI Advisor language parameter**: POST /api/ai-advisor/chat now accepts an optional
+         `language` field ("en" | "es" | "pt-BR"). System prompt gets a directive to reply in
+         that language (tested Portuguese — works).
+
+      Please test ONLY these backend changes:
+      1. GET /api/markets/fx → returns {rates: [{base, quote, rate, date}, ...], cached: bool}. First call cached:false, second cached:true.
+      2. GET /api/markets/stocks?symbols=AAPL,TSLA → returns {quotes: [{symbol, price, change, changePercent, high, low, prevClose}, ...]} with real non-zero values.
+      3. POST /api/watchlist {"symbol":"MSFT"} → 200 with {id, symbol:"MSFT"}. Second call for same symbol returns same id (idempotent).
+      4. POST /api/watchlist {"symbol":"NOTAREALSYMBOL123"} → 400 "Unknown stock symbol".
+      5. GET /api/watchlist → returns user's watchlist array.
+      6. DELETE /api/watchlist/MSFT → 200 {deleted:true}, subsequent GET shows it's gone.
+      7. POST /api/ai-advisor/chat with {"message":"Hello","language":"pt-BR"} → reply should be in Brazilian Portuguese (contains non-English words like "você", "seu", "olá" etc.).
+      8. Same with {"language":"es"} → reply in Spanish (contains "tu", "tus", "hola" etc.).
+      9. All endpoints 401 without auth.
+
+      Credentials: admin@finflow.com / admin123. Do NOT test frontend.
   - agent: "testing"
     message: |
       All 4 AI Advisor backend endpoints tested end-to-end via /app/backend_test.py against the

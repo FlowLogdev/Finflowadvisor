@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColors } from '../../src/theme';
+import { useI18n } from '../../src/i18n';
 import { ThemeToggle } from '../../src/components/LogoHeader';
 import {
   aiAdvisorChat, aiAdvisorHistory, aiAdvisorClearHistory,
@@ -19,7 +20,7 @@ type Msg = {
   timestamp?: string;
 };
 
-const SUGGESTED_PROMPTS = [
+const FALLBACK_PROMPTS = [
   'How can I save $500 this month?',
   'Which of my expenses should I cut?',
   'Am I on track with my 50/30/20 budget?',
@@ -29,12 +30,18 @@ const SUGGESTED_PROMPTS = [
 
 export default function AdvisorScreen() {
   const c = useThemeColors();
+  const { t, language } = useI18n();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const scrollRef = useRef<ScrollView>(null);
+
+  const suggestedPrompts = [
+    t('advisor.prompt1'), t('advisor.prompt2'), t('advisor.prompt3'),
+    t('advisor.prompt4'), t('advisor.prompt5'),
+  ].map((p, i) => p.startsWith('[') || p === `advisor.prompt${i + 1}` ? FALLBACK_PROMPTS[i] : p);
 
   useFocusEffect(
     useCallback(() => {
@@ -72,7 +79,7 @@ export default function AdvisorScreen() {
     setMessages((prev) => [...prev, { role: 'user', content: msg }]);
     setSending(true);
     try {
-      const res = await aiAdvisorChat(msg, sessionId);
+      const res = await aiAdvisorChat(msg, sessionId, language);
       setSessionId(res.session_id);
       setMessages((prev) => [...prev, { role: 'assistant', content: res.reply }]);
     } catch (e: any) {
@@ -87,12 +94,12 @@ export default function AdvisorScreen() {
 
   const clearChat = () => {
     Alert.alert(
-      'Clear conversation?',
-      'This will permanently delete all your chats with FinBot.',
+      t('advisor.clearChat'),
+      t('advisor.clearChatDesc'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Clear',
+          text: t('advisor.clear'),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -100,7 +107,7 @@ export default function AdvisorScreen() {
               setMessages([]);
               setSessionId(undefined);
             } catch (e: any) {
-              Alert.alert('Error', e?.message || 'Failed to clear history');
+              Alert.alert(t('common.error'), e?.message || 'Failed to clear history');
             }
           },
         },
@@ -125,9 +132,9 @@ export default function AdvisorScreen() {
             <Ionicons name="sparkles" size={18} color="#fff" />
           </View>
           <View>
-            <Text style={[styles.title, { color: c.text }]}>FinBot</Text>
+            <Text style={[styles.title, { color: c.text }]}>{t('advisor.title')}</Text>
             <Text style={[styles.subtitle, { color: c.textMuted }]}>
-              Your AI money coach
+              {t('advisor.subtitle')}
             </Text>
           </View>
         </View>
@@ -160,15 +167,15 @@ export default function AdvisorScreen() {
                   <Ionicons name="sparkles" size={20} color="#fff" />
                 </View>
                 <Text style={[styles.emptyTitle, { color: c.text }]}>
-                  Hi! I'm FinBot 👋
+                  {t('advisor.welcomeTitle')}
                 </Text>
                 <Text style={[styles.emptyText, { color: c.textMuted }]}>
-                  I've got a full picture of your bills, expenses, and budget. Ask me anything about saving money, cutting costs, or hitting your goals.
+                  {t('advisor.welcomeText')}
                 </Text>
               </View>
 
-              <Text style={[styles.promptsLabel, { color: c.textMuted }]}>Try asking:</Text>
-              {SUGGESTED_PROMPTS.map((p) => (
+              <Text style={[styles.promptsLabel, { color: c.textMuted }]}>{t('advisor.tryAsking')}</Text>
+              {suggestedPrompts.map((p) => (
                 <TouchableOpacity
                   key={p}
                   style={[styles.promptChip, { backgroundColor: c.card, borderColor: c.border }]}
@@ -223,7 +230,7 @@ export default function AdvisorScreen() {
               <View style={[styles.bubble, { backgroundColor: c.card, borderColor: c.border, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center' }]}>
                 <ActivityIndicator size="small" color={c.income} />
                 <Text style={[styles.bubbleText, { color: c.textMuted, marginLeft: 8, fontSize: 13 }]}>
-                  FinBot is thinking…
+                  {t('advisor.thinking')}
                 </Text>
               </View>
             </View>
@@ -236,7 +243,7 @@ export default function AdvisorScreen() {
             <TextInput
               value={input}
               onChangeText={setInput}
-              placeholder="Ask FinBot about your money..."
+              placeholder={t('advisor.placeholder')}
               placeholderTextColor={c.textMuted}
               style={[styles.input, { color: c.text }]}
               multiline
