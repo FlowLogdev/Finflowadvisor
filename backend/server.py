@@ -424,6 +424,27 @@ async def _build_financial_context(user_id: str) -> str:
     bill_lines = "\n".join([f"  - {b.get('name','')} ({b.get('category','')}): {currency}{b.get('amount',0):.2f} on day {b.get('dueDay','?')}" for b in bills[:10]]) or "  (none)"
     cat_lines = "\n".join([f"  - {c}: {currency}{a:.2f}" for c, a in top_cats]) or "  (none yet this month)"
 
+    # Add forecast / risk / personality from insights if available
+    smart_context = ""
+    try:
+        # Reuse insights logic by querying fresh data — already have it above
+        days_elapsed = max(now.day, 1)
+        daily_burn = total_expenses / days_elapsed if days_elapsed else 0
+        wants_budget = salary * (pct_wants / 100)
+        discretionary_remaining = max(wants_budget - total_expenses, 0)
+        runway_days = int(discretionary_remaining / daily_burn) if daily_burn > 0.01 else 999
+        bills_ratio = total_bills / salary if salary > 0 else 0
+        if bills_ratio >= 0.6:
+            risk = "HIGH (bills are very expensive)"
+        elif bills_ratio >= 0.5:
+            risk = "MEDIUM"
+        else:
+            risk = "LOW"
+        if runway_days < 999:
+            smart_context = f"\nFINANCIAL HEALTH METRICS:\n- Risk level: {risk}\n- Bills are {int(bills_ratio*100)}% of income\n- Discretionary runway: {runway_days} days at current pace\n- Daily burn rate: {currency}{daily_burn:.2f}/day"
+    except Exception:
+        pass
+
     return f"""USER FINANCIAL SNAPSHOT (current month: {now.strftime('%B %Y')}):
 
 Monthly Net Salary: {currency}{salary:.2f}
@@ -437,7 +458,7 @@ THIS MONTH'S EXPENSES SO FAR (total {currency}{total_expenses:.2f}):
 Top categories:
 {cat_lines}
 
-Remaining disposable after bills: {currency}{max(salary - total_bills, 0):.2f}
+Remaining disposable after bills: {currency}{max(salary - total_bills, 0):.2f}{smart_context}
 """
 
 ADVISOR_SYSTEM_PROMPT = """You are FinBot, a friendly, concise personal-finance coach built into the FinFlow app.
@@ -570,6 +591,296 @@ async def ai_advisor_daily_insight(user: dict = Depends(get_current_user)):
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     return {"insight": insight_text, "cached": False}
+
+
+# ── Smart Insights Engine (Predictive + Leaks + Personality) ──────
+
+def _iso_month_start(dt: datetime) -> datetime:
+    return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+def _days_until_month_end(now: datetime) -> int:
+    import calendar
+    last_day = calendar.monthrange(now.year, now.month)[1]
+    return max(last_day - now.day, 0)
+
+@api_router.get("/insights")
+async def get_insights(user: dict = Depends(get_current_user)):
+    """Unified smart-insights endpoint: forecast + leaks + personality + weekly report."""
+    uid = user["_id"]
+    settings = await db.settings.find_one({"user_id": uid}, {"_id": 0, "user_id": 0}) or {}
+    bills = await db.bills.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
+    expenses = await db.expenses.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(2000)
+
+    salary = float(settings.get("salary", 0))
+    currency = settings.get("currency", "$")
+    pct_needs = settings.get("pctNeeds", 50) / 100.0
+    pct_wants = settings.get("pctWants", 30) / 100.0
+    pct_savings = settings.get("pctSavings", 20) / 100.0
+
+    now = datetime.now(timezone.utc)
+    month_start = _iso_month_start(now)
+    last_month_start = _iso_month_start((month_start - timedelta(days=1)))
+    last_week_start = now - timedelta(days=7)
+
+    # Parse expense dates robustly
+    def parse_date(s):
+        try:
+            return datetime.fromisoformat(s.replace('Z', '+00:00')) if isinstance(s, str) else s
+        except Exception:
+            return None
+
+    cur_month_exp = [e for e in expenses if (d := parse_date(e.get("date"))) and d >= month_start]
+    last_month_exp = [e for e in expenses if (d := parse_date(e.get("date"))) and last_month_start <= d < month_start]
+    last_week_exp = [e for e in expenses if (d := parse_date(e.get("date"))) and d >= last_week_start]
+
+    total_bills = sum(b["amount"] for b in bills)
+    total_exp_month = sum(e["amount"] for e in cur_month_exp)
+    total_exp_last_month = sum(e["amount"] for e in last_month_exp)
+    total_exp_week = sum(e["amount"] for e in last_week_exp)
+
+    wants_budget = salary * pct_wants
+    # ═══ 1. PREDICTIVE FORECAST ═══
+    days_elapsed = max(now.day, 1)
+    days_left = _days_until_month_end(now)
+    daily_burn = total_exp_month / days_elapsed if days_elapsed else 0
+    projected_month_exp = daily_burn * (days_elapsed + days_left) if days_elapsed else 0
+    projected_end_balance = salary - total_bills - projected_month_exp
+
+    # Discretionary runway: how many days until wants budget is exhausted at current pace
+    discretionary_remaining = max(wants_budget - total_exp_month, 0)
+    runway_days = int(discretionary_remaining / daily_burn) if daily_burn > 0.01 else 999
+
+    # Risk level
+    bills_ratio = total_bills / salary if salary > 0 else 0
+    if salary == 0:
+        risk_level, risk_reason = "unknown", "Set your salary to see risk analysis"
+    elif bills_ratio >= 0.6:
+        risk_level, risk_reason = "high", f"Bills are {int(bills_ratio*100)}% of income"
+    elif projected_end_balance < 0:
+        risk_level, risk_reason = "high", "Projected to overspend this month"
+    elif bills_ratio >= 0.5 or runway_days < 7:
+        risk_level, risk_reason = "medium", "Watch your discretionary spending"
+    else:
+        risk_level, risk_reason = "low", "You're on a healthy financial track"
+
+    forecast = {
+        "runway_days": runway_days,
+        "discretionary_remaining": round(discretionary_remaining, 2),
+        "daily_burn": round(daily_burn, 2),
+        "projected_month_exp": round(projected_month_exp, 2),
+        "projected_end_balance": round(projected_end_balance, 2),
+        "risk_level": risk_level,
+        "risk_reason": risk_reason,
+        "days_left_in_month": days_left,
+    }
+
+    # ═══ 2. MONEY LEAKS DETECTION ═══
+    leaks = []
+
+    # 2a. Category spending creep (current month vs last month same-day prorated)
+    cur_by_cat: dict = {}
+    for e in cur_month_exp:
+        cur_by_cat[e["category"]] = cur_by_cat.get(e["category"], 0) + e["amount"]
+    last_by_cat: dict = {}
+    for e in last_month_exp:
+        last_by_cat[e["category"]] = last_by_cat.get(e["category"], 0) + e["amount"]
+
+    days_in_last_month = ((month_start - last_month_start).days) or 30
+    prorate = days_elapsed / days_in_last_month
+    for cat, cur_amt in cur_by_cat.items():
+        last_amt = last_by_cat.get(cat, 0)
+        expected_so_far = last_amt * prorate
+        if expected_so_far > 20 and cur_amt > expected_so_far * 1.25:
+            pct_increase = int(((cur_amt - expected_so_far) / expected_so_far) * 100)
+            leaks.append({
+                "type": "creep",
+                "severity": "medium" if pct_increase < 50 else "high",
+                "title": f"{cat} spending up {pct_increase}%",
+                "description": f"You've spent {currency}{cur_amt:.0f} on {cat} this month vs {currency}{expected_so_far:.0f} expected at this pace.",
+                "estimated_waste": round(cur_amt - expected_so_far, 2),
+                "category": cat,
+            })
+
+    # 2b. Likely forgotten subscriptions: small recurring bills ($5-$30) in Subscriptions category
+    for b in bills:
+        amt = b.get("amount", 0)
+        cat = b.get("category", "")
+        if 5 <= amt <= 35 and cat in ("Subscriptions", "Entertainment", "Other"):
+            leaks.append({
+                "type": "subscription",
+                "severity": "low",
+                "title": f"Review subscription: {b.get('name', 'Unknown')}",
+                "description": f"Small recurring charge of {currency}{amt:.2f}/mo. Cancel if unused = save {currency}{amt*12:.0f}/yr.",
+                "estimated_waste": round(amt * 12, 2),
+                "category": cat,
+            })
+
+    # 2c. Duplicate charges (same merchant + same amount within 7 days)
+    seen = {}
+    for e in sorted(cur_month_exp + last_week_exp, key=lambda x: parse_date(x.get("date")) or now):
+        name = (e.get("name") or "").strip().lower()
+        amt = e.get("amount", 0)
+        d = parse_date(e.get("date"))
+        if not name or not d:
+            continue
+        key = f"{name}:{amt:.2f}"
+        if key in seen:
+            prev_d = seen[key]
+            delta = abs((d - prev_d).days)
+            if delta <= 7:
+                leaks.append({
+                    "type": "duplicate",
+                    "severity": "high",
+                    "title": f"Possible duplicate charge: {e.get('name')}",
+                    "description": f"{currency}{amt:.2f} charged twice within {delta} days. Worth reviewing.",
+                    "estimated_waste": round(amt, 2),
+                    "category": e.get("category", ""),
+                })
+        seen[key] = d
+
+    # Sort leaks by estimated_waste desc, cap to top 6
+    leaks.sort(key=lambda x: -x["estimated_waste"])
+    leaks = leaks[:6]
+    total_leak_savings = round(sum(l["estimated_waste"] for l in leaks), 2)
+
+    # ═══ 3. FINANCIAL PERSONALITY ═══
+    # Classify based on behavior patterns
+    personality = "explorer"
+    personality_desc = "Still gathering data on your habits…"
+
+    if salary > 0 and (bills or cur_month_exp):
+        savings_pct_actual = (salary - total_bills - total_exp_month) / salary if salary else 0
+        dining_ratio = cur_by_cat.get("Dining", 0) / max(total_exp_month, 1)
+        shopping_ratio = cur_by_cat.get("Shopping", 0) / max(total_exp_month, 1)
+        entertainment_ratio = cur_by_cat.get("Entertainment", 0) / max(total_exp_month, 1)
+        impulse_ratio = dining_ratio + shopping_ratio + entertainment_ratio
+
+        if savings_pct_actual >= 0.25 and bills_ratio < 0.4:
+            personality = "optimizer"
+            personality_desc = f"You save {int(savings_pct_actual*100)}% and keep bills low — textbook financial discipline."
+        elif savings_pct_actual >= 0.15 and impulse_ratio < 0.35:
+            personality = "stability_seeker"
+            personality_desc = "You prioritize steady savings and predictable spending. Reliable and balanced."
+        elif impulse_ratio > 0.50:
+            personality = "impulse_spender"
+            personality_desc = f"{int(impulse_ratio*100)}% of spending goes to dining, shopping, and entertainment. Treats are great, but watch the pace."
+        elif savings_pct_actual < 0:
+            personality = "overextended"
+            personality_desc = "Expenses exceed income this month. Let's find quick wins to turn this around."
+        else:
+            personality = "balanced"
+            personality_desc = "You're navigating money thoughtfully — neither too strict nor too loose."
+
+    personality_labels = {
+        "optimizer": {"label": "Optimizer", "emoji": "🎯", "color": "#2d5a3d"},
+        "stability_seeker": {"label": "Stability Seeker", "emoji": "🏛️", "color": "#1A4A8A"},
+        "impulse_spender": {"label": "Impulse Spender", "emoji": "⚡", "color": "#c84b1f"},
+        "overextended": {"label": "Overextended", "emoji": "🆘", "color": "#b0252b"},
+        "balanced": {"label": "Balanced", "emoji": "⚖️", "color": "#b8740a"},
+        "explorer": {"label": "Explorer", "emoji": "🧭", "color": "#6b7280"},
+    }
+    personality_obj = {
+        "key": personality,
+        **personality_labels[personality],
+        "description": personality_desc,
+    }
+
+    # ═══ 4. WEEKLY REPORT ═══
+    weekly_exp_by_cat: dict = {}
+    for e in last_week_exp:
+        weekly_exp_by_cat[e["category"]] = weekly_exp_by_cat.get(e["category"], 0) + e["amount"]
+    top_week_cat = max(weekly_exp_by_cat.items(), key=lambda x: x[1])[0] if weekly_exp_by_cat else None
+
+    # Compare to prior week (7-14 days ago)
+    prior_week_start = now - timedelta(days=14)
+    prior_week_exp = [e for e in expenses if (d := parse_date(e.get("date"))) and prior_week_start <= d < last_week_start]
+    total_prior_week = sum(e["amount"] for e in prior_week_exp)
+    week_change_pct = 0
+    if total_prior_week > 0:
+        week_change_pct = int(((total_exp_week - total_prior_week) / total_prior_week) * 100)
+
+    weekly_report = {
+        "week_total": round(total_exp_week, 2),
+        "prior_week_total": round(total_prior_week, 2),
+        "change_pct": week_change_pct,
+        "top_category": top_week_cat,
+        "transaction_count": len(last_week_exp),
+    }
+
+    return {
+        "currency": currency,
+        "forecast": forecast,
+        "leaks": leaks,
+        "total_leak_savings": total_leak_savings,
+        "personality": personality_obj,
+        "weekly_report": weekly_report,
+    }
+
+
+# ── Scenario Simulator ─────────────────────────────────────────────
+
+class ScenarioInput(BaseModel):
+    salary: float
+    bills_adjustment: float = 0      # add/subtract from current bills total
+    monthly_savings_target: float = 0  # monthly amount toward a goal
+    big_purchase_amount: float = 0   # one-time purchase
+    goal_name: Optional[str] = "My goal"
+    goal_target_amount: Optional[float] = 0
+
+
+@api_router.post("/scenario")
+async def run_scenario(data: ScenarioInput, user: dict = Depends(get_current_user)):
+    uid = user["_id"]
+    settings = await db.settings.find_one({"user_id": uid}) or {}
+    bills = await db.bills.find({"user_id": uid}).to_list(500)
+    now = datetime.now(timezone.utc)
+    month_start = _iso_month_start(now)
+
+    def parse_date(s):
+        try:
+            return datetime.fromisoformat(s.replace('Z', '+00:00')) if isinstance(s, str) else s
+        except Exception:
+            return None
+
+    expenses_docs = await db.expenses.find({"user_id": uid}).to_list(2000)
+    cur_month_exp = [e for e in expenses_docs if (d := parse_date(e.get("date"))) and d >= month_start]
+
+    current_bills = sum(b["amount"] for b in bills)
+    current_exp_avg = sum(e["amount"] for e in cur_month_exp)
+
+    new_salary = data.salary
+    new_bills = max(current_bills + data.bills_adjustment, 0)
+    projected_savings = data.monthly_savings_target
+    net_left = new_salary - new_bills - current_exp_avg - projected_savings
+
+    # Savings timeline for goal
+    timeline_months = None
+    if data.goal_target_amount and data.goal_target_amount > 0 and projected_savings > 0:
+        effective = projected_savings - (data.big_purchase_amount / 12 if data.big_purchase_amount else 0)
+        if effective > 0:
+            timeline_months = max(int(data.goal_target_amount / effective), 1)
+
+    # Risk assessment
+    bills_ratio = new_bills / new_salary if new_salary > 0 else 0
+    if net_left < 0 or bills_ratio > 0.6:
+        risk = "high"
+    elif bills_ratio > 0.5 or net_left < new_salary * 0.1:
+        risk = "medium"
+    else:
+        risk = "low"
+
+    return {
+        "new_salary": round(new_salary, 2),
+        "new_bills": round(new_bills, 2),
+        "projected_monthly_expenses": round(current_exp_avg, 2),
+        "monthly_savings": round(projected_savings, 2),
+        "net_left": round(net_left, 2),
+        "bills_ratio_pct": round(bills_ratio * 100, 1),
+        "risk_level": risk,
+        "goal_timeline_months": timeline_months,
+        "goal_name": data.goal_name,
+        "goal_target": data.goal_target_amount,
+    }
 
 
 # ── Markets: FX rates & Stock quotes ──────────────────────────────

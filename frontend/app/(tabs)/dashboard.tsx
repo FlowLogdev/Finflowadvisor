@@ -18,6 +18,7 @@ import { DashboardData, SavingsGoal } from '../../src/types';
 import { useAuth } from '../../src/auth';
 import { ThemeToggle } from '../../src/components/LogoHeader';
 import { MarketsCard, WatchlistCard } from '../../src/components/MarketsCards';
+import { InsightsPanel } from '../../src/components/InsightsPanel';
 
 const SCREEN_W = Dimensions.get('window').width;
 
@@ -195,6 +196,9 @@ export default function DashboardScreen() {
               )}
             </View>
           </TouchableOpacity>
+
+          {/* ── Smart Insights (Forecast, Personality, Leaks, Weekly) ── */}
+          <InsightsPanel />
 
           {/* ── Live Markets (FX + Stocks) ── */}
           <MarketsCard />

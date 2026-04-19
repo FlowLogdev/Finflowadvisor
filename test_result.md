@@ -344,3 +344,14 @@ agent_communication:
 
       Backend logs show LiteLLM calls to openai/gpt-4.1-mini completing successfully in ~1-3s.
       No issues found. All 3 backend tasks marked working:true, needs_retesting:false.
+
+
+  - agent: "main"
+    message: |
+      Phase 3 complete — 6 smart features shipped: Predictive Forecast, Money Leaks detector,
+      Scenario Simulator, Smarter AI Coach, Weekly Report, Financial Personality.
+      New backend endpoints: GET /api/insights, POST /api/scenario.
+      AI advisor context upgraded with risk metrics (runway, bills ratio, daily burn).
+      New frontend: InsightsPanel component on Dashboard + /simulator screen + i18n strings.
+      Manually verified: insights returns all fields, scenario returns goal_timeline_months
+      (tested: 30k goal / 1k/mo = 30 months, low risk), AI works with new context.

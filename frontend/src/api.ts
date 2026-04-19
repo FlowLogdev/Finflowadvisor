@@ -75,3 +75,71 @@ export const addToWatchlist = (symbol: string) =>
   api<{ id: string; symbol: string }>('/api/watchlist', { method: 'POST', body: JSON.stringify({ symbol }) });
 export const removeFromWatchlist = (symbol: string) =>
   api<{ deleted: boolean }>(`/api/watchlist/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
+
+// ── Smart Insights (Predictive + Leaks + Personality + Weekly) ──
+export type InsightForecast = {
+  runway_days: number;
+  discretionary_remaining: number;
+  daily_burn: number;
+  projected_month_exp: number;
+  projected_end_balance: number;
+  risk_level: 'low' | 'medium' | 'high' | 'unknown';
+  risk_reason: string;
+  days_left_in_month: number;
+};
+export type MoneyLeak = {
+  type: 'creep' | 'subscription' | 'duplicate' | 'price_increase';
+  severity: 'low' | 'medium' | 'high';
+  title: string;
+  description: string;
+  estimated_waste: number;
+  category: string;
+};
+export type Personality = {
+  key: string;
+  label: string;
+  emoji: string;
+  color: string;
+  description: string;
+};
+export type WeeklyReport = {
+  week_total: number;
+  prior_week_total: number;
+  change_pct: number;
+  top_category: string | null;
+  transaction_count: number;
+};
+export type InsightsResponse = {
+  currency: string;
+  forecast: InsightForecast;
+  leaks: MoneyLeak[];
+  total_leak_savings: number;
+  personality: Personality;
+  weekly_report: WeeklyReport;
+};
+
+export const getInsights = () => api<InsightsResponse>('/api/insights');
+
+export type ScenarioInput = {
+  salary: number;
+  bills_adjustment?: number;
+  monthly_savings_target?: number;
+  big_purchase_amount?: number;
+  goal_name?: string;
+  goal_target_amount?: number;
+};
+export type ScenarioResult = {
+  new_salary: number;
+  new_bills: number;
+  projected_monthly_expenses: number;
+  monthly_savings: number;
+  net_left: number;
+  bills_ratio_pct: number;
+  risk_level: 'low' | 'medium' | 'high';
+  goal_timeline_months: number | null;
+  goal_name: string;
+  goal_target: number;
+};
+
+export const runScenario = (data: ScenarioInput) =>
+  api<ScenarioResult>('/api/scenario', { method: 'POST', body: JSON.stringify(data) });
