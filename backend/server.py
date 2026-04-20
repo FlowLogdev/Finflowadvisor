@@ -598,6 +598,21 @@ async def ai_advisor_daily_insight(user: dict = Depends(get_current_user)):
 def _iso_month_start(dt: datetime) -> datetime:
     return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
+def _parse_expense_date(s):
+    """Robustly parse an ISO date string into a timezone-aware datetime (UTC).
+    Returns None if unparseable. Fixes naive/aware comparison crashes.
+    """
+    try:
+        if not isinstance(s, str):
+            # Already a datetime? Make it timezone-aware.
+            if isinstance(s, datetime):
+                return s if s.tzinfo else s.replace(tzinfo=timezone.utc)
+            return None
+        d = datetime.fromisoformat(s.replace('Z', '+00:00'))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
 def _days_until_month_end(now: datetime) -> int:
     import calendar
     last_day = calendar.monthrange(now.year, now.month)[1]
@@ -622,12 +637,8 @@ async def get_insights(user: dict = Depends(get_current_user)):
     last_month_start = _iso_month_start((month_start - timedelta(days=1)))
     last_week_start = now - timedelta(days=7)
 
-    # Parse expense dates robustly
-    def parse_date(s):
-        try:
-            return datetime.fromisoformat(s.replace('Z', '+00:00')) if isinstance(s, str) else s
-        except Exception:
-            return None
+    # Parse expense dates robustly (timezone-aware, handles naive/aware mixing)
+    parse_date = _parse_expense_date
 
     cur_month_exp = [e for e in expenses if (d := parse_date(e.get("date"))) and d >= month_start]
     last_month_exp = [e for e in expenses if (d := parse_date(e.get("date"))) and last_month_start <= d < month_start]
@@ -837,10 +848,7 @@ async def run_scenario(data: ScenarioInput, user: dict = Depends(get_current_use
     month_start = _iso_month_start(now)
 
     def parse_date(s):
-        try:
-            return datetime.fromisoformat(s.replace('Z', '+00:00')) if isinstance(s, str) else s
-        except Exception:
-            return None
+        return _parse_expense_date(s)
 
     expenses_docs = await db.expenses.find({"user_id": uid}).to_list(2000)
     cur_month_exp = [e for e in expenses_docs if (d := parse_date(e.get("date"))) and d >= month_start]
