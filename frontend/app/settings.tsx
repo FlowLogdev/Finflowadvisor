@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert,
+  View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -9,16 +9,22 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme, ThemeMode } from '../src/theme';
 import { useI18n, LANGUAGES, LanguageCode } from '../src/i18n';
 import { getSettings, updateSettings, resetAllData } from '../src/api';
+import { getBillingMe, cancelSubscription, emailExport, BillingMe } from '../src/featuresApi';
+import { useAuth } from '../src/auth';
 import { CURRENCIES } from '../src/types';
 
 export default function SettingsScreen() {
   const { colors: c, mode, setMode } = useTheme();
   const { t, language, setLanguage } = useI18n();
   const router = useRouter();
+  const { user } = useAuth();
   const [currency, setCurrency] = useState('$');
+  const [billing, setBilling] = useState<BillingMe | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
 
   useEffect(() => {
     getSettings().then((s) => setCurrency(s.currency)).catch(() => {});
+    getBillingMe().then(setBilling).catch(() => setBilling({ premium: false }));
   }, []);
 
   const changeCurrency = async (sym: string) => {
@@ -46,6 +52,44 @@ export default function SettingsScreen() {
     );
   };
 
+  const handleEmailExport = async (format: 'csv' | 'xlsx') => {
+    setExporting(format);
+    try {
+      await emailExport(format);
+      Alert.alert('Email sent 📧', `Your ${format.toUpperCase()} export is on its way to your inbox.`);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message?.slice(0, 160) || 'Could not send export');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const handleCancelSubscription = () => {
+    Alert.alert(
+      'Cancel subscription?',
+      'You\'ll keep access until the end of your billing period. You can resubscribe anytime.',
+      [
+        { text: 'Keep Premium', style: 'cancel' },
+        {
+          text: 'Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await cancelSubscription();
+              const me = await getBillingMe().catch(() => ({ premium: false }));
+              setBilling(me);
+              Alert.alert('Canceled', 'Your subscription has been canceled.');
+            } catch (e: any) {
+              Alert.alert('Error', e?.message?.slice(0, 160) || 'Could not cancel');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const isAdmin = user?.role === 'admin' || user?.email === 'admin@finflow.com';
+
   const MODES: { key: ThemeMode; label: string; icon: string }[] = [
     { key: 'system', label: 'System', icon: 'phone-portrait-outline' },
     { key: 'light', label: 'Light', icon: 'sunny-outline' },
@@ -64,6 +108,79 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* Premium status / CTA */}
+        {billing?.premium ? (
+          <View style={[styles.premiumCard, { backgroundColor: c.income }]}>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="sparkles" size={18} color="#fff" />
+                <Text style={styles.premiumTitle}>Premium</Text>
+              </View>
+              {billing.premium_until && (
+                <Text style={styles.premiumSub}>
+                  Renews {new Date(billing.premium_until).toLocaleDateString()}
+                </Text>
+              )}
+            </View>
+            <TouchableOpacity onPress={handleCancelSubscription} style={styles.cancelLink}>
+              <Text style={styles.cancelLinkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={[styles.upgradeCard, { backgroundColor: c.income }]}
+            onPress={() => router.push('/premium' as any)}
+          >
+            <Ionicons name="sparkles" size={20} color="#fff" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.upgradeTitle}>Go Premium</Text>
+              <Text style={styles.upgradeSub}>Unlock AI, exports, and more from $9.99/mo</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#fff" />
+          </TouchableOpacity>
+        )}
+
+        {/* Quick Actions */}
+        <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Support & Data</Text>
+        <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border, padding: 0 }]}>
+          <TouchableOpacity style={styles.actionRow} onPress={() => router.push('/support' as any)}>
+            <Ionicons name="help-buoy-outline" size={20} color={c.income} />
+            <Text style={[styles.actionText, { color: c.textPrimary }]}>Contact Support</Text>
+            <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionRow, { borderTopWidth: 0.5, borderTopColor: c.border }]}
+            onPress={() => handleEmailExport('csv')}
+            disabled={exporting !== null}
+          >
+            <Ionicons name="document-text-outline" size={20} color={c.income} />
+            <Text style={[styles.actionText, { color: c.textPrimary }]}>Email me CSV export</Text>
+            {exporting === 'csv' ? <ActivityIndicator size="small" color={c.income} /> : <Ionicons name="mail-outline" size={16} color={c.textMuted} />}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionRow, { borderTopWidth: 0.5, borderTopColor: c.border }]}
+            onPress={() => handleEmailExport('xlsx')}
+            disabled={exporting !== null}
+          >
+            <Ionicons name="grid-outline" size={20} color={c.income} />
+            <Text style={[styles.actionText, { color: c.textPrimary }]}>Email me Excel export</Text>
+            {exporting === 'xlsx' ? <ActivityIndicator size="small" color={c.income} /> : <Ionicons name="mail-outline" size={16} color={c.textMuted} />}
+          </TouchableOpacity>
+
+          {isAdmin && (
+            <TouchableOpacity
+              style={[styles.actionRow, { borderTopWidth: 0.5, borderTopColor: c.border }]}
+              onPress={() => router.push('/admin-tickets' as any)}
+            >
+              <Ionicons name="shield-checkmark-outline" size={20} color={c.warning} />
+              <Text style={[styles.actionText, { color: c.textPrimary }]}>Admin · Support Tickets</Text>
+              <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
+            </TouchableOpacity>
+          )}
+        </View>
+
         {/* Language */}
         <Text style={[styles.sectionLabel, { color: c.textMuted }]}>{t('settings.language')}</Text>
         <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
@@ -182,4 +299,28 @@ const styles = StyleSheet.create({
   aboutRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
   aboutLabel: { fontFamily: 'DMSans_500Medium', fontSize: 15 },
   aboutValue: { fontFamily: 'DMSans_400Regular', fontSize: 14 },
+
+  // Premium / Upgrade
+  premiumCard: {
+    flexDirection: 'row', alignItems: 'center',
+    padding: 16, borderRadius: 14, marginBottom: 20,
+  },
+  premiumTitle: { color: '#fff', fontFamily: 'DMSans_700Bold', fontSize: 16 },
+  premiumSub: { color: '#fff', fontFamily: 'DMSans_400Regular', fontSize: 12, opacity: 0.9, marginTop: 2 },
+  cancelLink: { paddingHorizontal: 10, paddingVertical: 6 },
+  cancelLinkText: { color: '#fff', fontFamily: 'DMSans_600SemiBold', fontSize: 12, textDecorationLine: 'underline' },
+
+  upgradeCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    padding: 16, borderRadius: 14, marginBottom: 20,
+  },
+  upgradeTitle: { color: '#fff', fontFamily: 'DMSans_700Bold', fontSize: 16 },
+  upgradeSub: { color: '#fff', fontFamily: 'DMSans_400Regular', fontSize: 12, opacity: 0.9, marginTop: 2 },
+
+  // Support & data rows
+  actionRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 16, paddingVertical: 14,
+  },
+  actionText: { flex: 1, fontFamily: 'DMSans_500Medium', fontSize: 14 },
 });
