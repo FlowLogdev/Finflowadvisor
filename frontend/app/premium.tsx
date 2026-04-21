@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Alert, Platform,
+  ActivityIndicator, Alert, Platform, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
@@ -12,6 +12,11 @@ import {
   getPackages, startCheckout, pollBillingStatus, getBillingMe,
   BillingPackage,
 } from '../src/featuresApi';
+import {
+  isRcAvailable, initRevenueCat, getRcOfferings, purchaseRcPackage,
+  restoreRcPurchases, getRcSubscriptionState, RcPackage, RcSubscriptionState,
+} from '../src/revenueCat';
+import { useAuth } from '../src/auth';
 
 const BENEFITS = [
   'Unlimited AI Advisor chats with FinBot',
@@ -22,71 +27,183 @@ const BENEFITS = [
   'Priority support',
 ];
 
+type UnifiedPackage = {
+  source: 'rc' | 'stripe';
+  id: string;                   // rc identifier ($rc_monthly) OR stripe package id
+  label: string;
+  price: number;
+  priceString: string;
+  period: 'month' | 'year';
+};
+
 export default function PremiumScreen() {
   const c = useThemeColors();
   const router = useRouter();
-  const [packages, setPackages] = useState<BillingPackage[]>([]);
-  const [selected, setSelected] = useState<string>('yearly');
+  const { user } = useAuth();
+
+  const [packages, setPackages] = useState<UnifiedPackage[]>([]);
+  const [selected, setSelected] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
   const [premiumUntil, setPremiumUntil] = useState<string | undefined>();
+  const [managementURL, setManagementURL] = useState<string | undefined>();
+  const [useRc, setUseRc] = useState(false);
 
   useEffect(() => {
     (async () => {
-      try {
-        const [pkgs, me] = await Promise.all([getPackages(), getBillingMe().catch(() => ({ premium: false }))]);
-        setPackages(pkgs.packages || []);
-        setIsPremium(!!me.premium);
-        setPremiumUntil((me as any).premium_until);
-        if (pkgs.packages?.length) {
-          const yearly = pkgs.packages.find((p) => p.id === 'yearly');
-          setSelected((yearly || pkgs.packages[0]).id);
+      const rcOk = isRcAvailable() && user?.id
+        ? await initRevenueCat(user.id)
+        : false;
+      setUseRc(rcOk);
+
+      if (rcOk) {
+        // iOS/Android path — use RevenueCat
+        try {
+          const [rcPkgs, sub] = await Promise.all([
+            getRcOfferings(),
+            getRcSubscriptionState(),
+          ]);
+          const unified: UnifiedPackage[] = rcPkgs
+            .filter((p) => p.periodUnit === 'month' || p.periodUnit === 'year')
+            .map((p) => ({
+              source: 'rc' as const,
+              id: p.identifier,
+              label: p.periodUnit === 'year' ? 'Premium Yearly' : 'Premium Monthly',
+              price: p.price,
+              priceString: p.priceString,
+              period: p.periodUnit as 'month' | 'year',
+            }));
+          setPackages(unified);
+          const yearly = unified.find((u) => u.period === 'year');
+          setSelected((yearly || unified[0])?.id || '');
+          if (sub?.premium) {
+            setIsPremium(true);
+            setPremiumUntil(sub.expirationDate);
+            setManagementURL(sub.managementURL);
+          }
+        } catch (e: any) {
+          Alert.alert('Error', 'Could not load in-app purchases.');
         }
-      } catch (e: any) {
-        Alert.alert('Error', 'Could not load pricing. Please try again.');
-      } finally {
-        setLoading(false);
+      } else {
+        // Web path — use Stripe via finflowadvisors.com
+        try {
+          const [pkgs, me] = await Promise.all([
+            getPackages(),
+            getBillingMe().catch(() => ({ premium: false })),
+          ]);
+          const unified: UnifiedPackage[] = (pkgs.packages || []).map((p: BillingPackage) => ({
+            source: 'stripe' as const,
+            id: p.id,
+            label: p.label,
+            price: p.amount,
+            priceString: `$${p.amount.toFixed(2)}`,
+            period: p.days > 300 ? 'year' : 'month',
+          }));
+          setPackages(unified);
+          const yearly = unified.find((u) => u.period === 'year');
+          setSelected((yearly || unified[0])?.id || '');
+          setIsPremium(!!me.premium);
+          setPremiumUntil((me as any).premium_until);
+        } catch (e: any) {
+          Alert.alert('Error', 'Could not load pricing.');
+        }
       }
+      setLoading(false);
     })();
-  }, []);
+  }, [user?.id]);
 
   const handleSubscribe = async () => {
-    if (busy) return;
+    if (busy || !selected) return;
     setBusy(true);
     try {
-      const origin =
-        Platform.OS === 'web'
-          ? window.location.origin
-          : 'https://finflowadvisors.com';
-      const res = await startCheckout(selected, origin);
-      if (!res.url) throw new Error('No checkout URL');
-
-      // Open Stripe-hosted checkout
-      const result: any = await WebBrowser.openAuthSessionAsync(res.url, origin);
-      // Regardless of result, poll for up to 20s to see if paid
-      let paid = false;
-      for (let i = 0; i < 10; i++) {
-        try {
-          const s = await pollBillingStatus(res.session_id);
-          if (s.paid || s.status === 'complete' || s.status === 'paid') { paid = true; break; }
-        } catch {}
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      if (paid) {
-        Alert.alert('🎉 Premium activated', 'Welcome to FinFlow Premium!');
-        const me = await getBillingMe().catch(() => ({ premium: false }));
-        setIsPremium(!!me.premium);
-        setPremiumUntil((me as any).premium_until);
+      if (useRc) {
+        const res = await purchaseRcPackage(selected as any);
+        if (res.userCancelled) {
+          // silent
+        } else if (res.premium) {
+          Alert.alert('🎉 Premium activated', 'Welcome to FinFlow Premium!');
+          const sub = await getRcSubscriptionState();
+          if (sub) {
+            setIsPremium(sub.premium);
+            setPremiumUntil(sub.expirationDate);
+            setManagementURL(sub.managementURL);
+          }
+        } else if (res.error) {
+          Alert.alert('Purchase failed', res.error);
+        }
       } else {
-        Alert.alert('Not confirmed yet', 'If you completed the payment, your status will update shortly. Pull to refresh.');
+        // Web — Stripe
+        const origin =
+          Platform.OS === 'web' ? window.location.origin : 'https://finflowadvisors.com';
+        const res = await startCheckout(selected, origin);
+        if (!res.url) throw new Error('No checkout URL');
+        await WebBrowser.openAuthSessionAsync(res.url, origin);
+        let paid = false;
+        for (let i = 0; i < 10; i++) {
+          try {
+            const s = await pollBillingStatus(res.session_id);
+            if (s.paid || s.status === 'complete' || s.status === 'paid') { paid = true; break; }
+          } catch {}
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+        if (paid) {
+          Alert.alert('🎉 Premium activated', 'Welcome to FinFlow Premium!');
+          const me = await getBillingMe().catch(() => ({ premium: false }));
+          setIsPremium(!!me.premium);
+          setPremiumUntil((me as any).premium_until);
+        } else {
+          Alert.alert('Not confirmed yet', 'Your subscription should activate shortly.');
+        }
       }
     } catch (e: any) {
-      Alert.alert('Checkout error', e?.message?.slice(0, 160) || 'Could not start checkout');
+      Alert.alert('Checkout error', e?.message?.slice(0, 160) || 'Something went wrong');
     } finally {
       setBusy(false);
     }
   };
+
+  const handleRestore = async () => {
+    if (restoring) return;
+    setRestoring(true);
+    try {
+      if (useRc) {
+        const res = await restoreRcPurchases();
+        if (res.premium) {
+          setIsPremium(true);
+          const sub = await getRcSubscriptionState();
+          if (sub) {
+            setPremiumUntil(sub.expirationDate);
+            setManagementURL(sub.managementURL);
+          }
+          Alert.alert('Purchases restored', 'Your Premium access has been restored.');
+        } else {
+          Alert.alert(
+            'No purchases found',
+            res.error || 'No active subscription was found under your Apple ID.'
+          );
+        }
+      } else {
+        const me = await getBillingMe();
+        setIsPremium(!!me.premium);
+        setPremiumUntil(me.premium_until);
+        Alert.alert(me.premium ? 'Premium active' : 'No subscription found', '');
+      }
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const handleManage = async () => {
+    if (useRc && managementURL) {
+      Linking.openURL(managementURL);
+    } else {
+      router.push('/settings' as any);
+    }
+  };
+
+  const openURL = (url: string) => Linking.openURL(url);
 
   if (loading) {
     return (
@@ -119,10 +236,13 @@ export default function PremiumScreen() {
               <Text style={styles.premiumBadgeTitle}>You're Premium ✨</Text>
               {premiumUntil && (
                 <Text style={styles.premiumBadgeSub}>
-                  Valid until {new Date(premiumUntil).toLocaleDateString()}
+                  Renews {new Date(premiumUntil).toLocaleDateString()}
                 </Text>
               )}
             </View>
+            <TouchableOpacity style={styles.manageBtn} onPress={handleManage}>
+              <Text style={styles.manageBtnText}>Manage</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.heroWrap}>
@@ -138,13 +258,13 @@ export default function PremiumScreen() {
           </View>
         )}
 
-        {!isPremium && (
+        {!isPremium && packages.length > 0 && (
           <>
             <View style={styles.plansWrap}>
               {packages.map((p) => {
                 const isSel = selected === p.id;
-                const isYear = p.id === 'yearly';
-                const monthlyEq = p.id === 'yearly' ? (p.amount / 12).toFixed(2) : p.amount.toFixed(2);
+                const isYear = p.period === 'year';
+                const monthlyEq = isYear ? (p.price / 12).toFixed(2) : p.price.toFixed(2);
                 return (
                   <TouchableOpacity
                     key={p.id}
@@ -165,14 +285,12 @@ export default function PremiumScreen() {
                     )}
                     <Text style={[styles.planLabel, { color: c.textPrimary }]}>{p.label}</Text>
                     <View style={styles.priceRow}>
-                      <Text style={[styles.priceAmt, { color: c.textPrimary }]}>
-                        ${p.amount.toFixed(2)}
-                      </Text>
+                      <Text style={[styles.priceAmt, { color: c.textPrimary }]}>{p.priceString}</Text>
                       <Text style={[styles.pricePeriod, { color: c.textMuted }]}>
-                        /{p.days > 300 ? 'year' : 'month'}
+                        /{p.period === 'year' ? 'year' : 'month'}
                       </Text>
                     </View>
-                    {p.id === 'yearly' && (
+                    {isYear && (
                       <Text style={[styles.planEq, { color: c.textMuted }]}>
                         Just ${monthlyEq}/month
                       </Text>
@@ -193,21 +311,48 @@ export default function PremiumScreen() {
             <TouchableOpacity
               style={[styles.ctaBtn, { backgroundColor: c.income, opacity: busy ? 0.7 : 1 }]}
               onPress={handleSubscribe}
-              disabled={busy}
+              disabled={busy || !selected}
             >
               {busy ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
                   <Ionicons name="lock-open-outline" size={18} color="#fff" />
-                  <Text style={styles.ctaText}>Go Premium</Text>
+                  <Text style={styles.ctaText}>Subscribe</Text>
                 </>
               )}
             </TouchableOpacity>
+
             <Text style={[styles.fineprint, { color: c.textMuted }]}>
-              Secure checkout by Stripe. Cancel anytime.
+              {useRc
+                ? 'Billed via your ' + (Platform.OS === 'ios' ? 'Apple ID' : 'Google account') + ' account. Cancel anytime.'
+                : 'Secure checkout by Stripe. Cancel anytime.'}
             </Text>
           </>
+        )}
+
+        {/* Restore + Legal links — Apple REQUIRES these */}
+        <View style={styles.legalRow}>
+          <TouchableOpacity onPress={handleRestore} disabled={restoring}>
+            <Text style={[styles.legalLink, { color: c.income }]}>
+              {restoring ? 'Restoring…' : 'Restore Purchases'}
+            </Text>
+          </TouchableOpacity>
+          <Text style={[styles.legalSep, { color: c.textMuted }]}>·</Text>
+          <TouchableOpacity onPress={() => openURL('https://finflowadvisors.com/terms')}>
+            <Text style={[styles.legalLink, { color: c.income }]}>Terms</Text>
+          </TouchableOpacity>
+          <Text style={[styles.legalSep, { color: c.textMuted }]}>·</Text>
+          <TouchableOpacity onPress={() => openURL('https://finflowadvisors.com/privacy')}>
+            <Text style={[styles.legalLink, { color: c.income }]}>Privacy</Text>
+          </TouchableOpacity>
+        </View>
+
+        {useRc && (
+          <Text style={[styles.iapNote, { color: c.textMuted }]}>
+            Subscription auto-renews until canceled. Manage or cancel anytime in{' '}
+            {Platform.OS === 'ios' ? 'Settings → Apple ID → Subscriptions' : 'Play Store → Subscriptions'}.
+          </Text>
         )}
 
         <Text style={[styles.sectionTitle, { color: c.textPrimary }]}>What's included</Text>
@@ -241,6 +386,8 @@ const styles = StyleSheet.create({
   },
   premiumBadgeTitle: { color: '#fff', fontFamily: 'DMSans_700Bold', fontSize: 16 },
   premiumBadgeSub: { color: '#fff', fontFamily: 'DMSans_400Regular', fontSize: 12, marginTop: 2, opacity: 0.9 },
+  manageBtn: { paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: '#fff', borderRadius: 8 },
+  manageBtnText: { color: '#fff', fontFamily: 'DMSans_600SemiBold', fontSize: 12 },
 
   heroWrap: { alignItems: 'center', marginVertical: 12, marginBottom: 24 },
   sparkleBubble: {
@@ -255,8 +402,7 @@ const styles = StyleSheet.create({
 
   plansWrap: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   planCard: {
-    flex: 1, borderRadius: 14,
-    padding: 16, position: 'relative',
+    flex: 1, borderRadius: 14, padding: 16, position: 'relative',
   },
   savePill: {
     position: 'absolute', top: -9, right: 8,
@@ -276,6 +422,17 @@ const styles = StyleSheet.create({
   },
   ctaText: { color: '#fff', fontFamily: 'DMSans_700Bold', fontSize: 15 },
   fineprint: { fontFamily: 'DMSans_400Regular', fontSize: 11, textAlign: 'center', marginTop: 8 },
+
+  legalRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 10, marginTop: 16, flexWrap: 'wrap',
+  },
+  legalLink: { fontFamily: 'DMSans_500Medium', fontSize: 12 },
+  legalSep: { fontFamily: 'DMSans_400Regular', fontSize: 12 },
+  iapNote: {
+    fontFamily: 'DMSans_400Regular', fontSize: 10, lineHeight: 14,
+    textAlign: 'center', marginTop: 12, paddingHorizontal: 12,
+  },
 
   sectionTitle: { fontFamily: 'DMSans_700Bold', fontSize: 14, marginTop: 28, marginBottom: 10 },
   benefitsCard: { borderRadius: 12, borderWidth: 0.5, padding: 4 },
