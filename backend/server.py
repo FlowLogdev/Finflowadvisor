@@ -571,6 +571,65 @@ async def toggle_subscription_unused(sub_id: str, user: dict = Depends(get_curre
         return {"marked_unused": new_val}
     raise HTTPException(status_code=404, detail="Subscription not found")
 
+
+# ── Future Self Projector ──────────────────────────────────────────
+
+@api_router.post("/future-self")
+async def get_future_self(user: dict = Depends(get_current_user)):
+    uid = user["_id"]
+    settings = await db.settings.find_one({"user_id": uid}) or {}
+    bills = await db.bills.find({"user_id": uid}).to_list(1000)
+    expenses = await db.expenses.find({"user_id": uid}).to_list(1000)
+    goals = await db.savings_goals.find({"user_id": uid}).to_list(1000)
+
+    salary = settings.get("salary", 0)
+    currency = settings.get("currency", "$")
+    total_bills = sum(b["amount"] for b in bills)
+    total_expenses = sum(e["amount"] for e in expenses)
+    total_saved = sum(g.get("saved", 0) for g in goals)
+    net_monthly = salary - total_bills - total_expenses
+
+    sub_waste = sum(b["amount"] for b in bills if b.get("marked_unused", False))
+    rec_waste = sum(e["amount"] for e in expenses if e.get("recurring", False) and e.get("marked_unused", False))
+    monthly_optimization = sub_waste + rec_waste or round(total_expenses * 0.10, 2)
+    optimized_net = net_monthly + monthly_optimization
+
+    ANNUAL_RETURN = 0.07
+    monthly_return = (1 + ANNUAL_RETURN) ** (1 / 12) - 1
+
+    def project(ms: float, y: int) -> int:
+        b = float(total_saved)
+        for _ in range(y * 12):
+            b = b * (1 + monthly_return) + max(ms, 0)
+        return int(round(b))
+
+    horizons = [5, 10, 20, 30]
+    return {
+        "currency": currency,
+        "current": {
+            "monthly_savings": round(max(net_monthly, 0)),
+            "monthly_spend": round(total_bills + total_expenses),
+            "projections": [
+                {"years": y, "balance": project(max(net_monthly, 0), y), "label": f"{y}yr"}
+                for y in horizons
+            ],
+        },
+        "optimized": {
+            "monthly_savings": round(max(optimized_net, 0)),
+            "monthly_spend": round(total_bills + total_expenses - monthly_optimization),
+            "monthly_freed": round(monthly_optimization),
+            "projections": [
+                {"years": y, "balance": project(max(optimized_net, 0), y), "label": f"{y}yr"}
+                for y in horizons
+            ],
+        },
+        "assumptions": {
+            "annual_return_pct": ANNUAL_RETURN * 100,
+            "starting_balance": round(total_saved),
+            "optimization_source": "subscription_cleanup" if (sub_waste + rec_waste) > 0 else "10pct_discretionary_reduction",
+        },
+    }
+
 # ── AI Advisor (LLM-powered personal finance coach) ────────────────
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -618,24 +677,50 @@ async def _build_financial_context(user_id: str) -> str:
     bill_lines = "\n".join([f"  - {b.get('name','')} ({b.get('category','')}): {currency}{b.get('amount',0):.2f} on day {b.get('dueDay','?')}" for b in bills[:10]]) or "  (none)"
     cat_lines = "\n".join([f"  - {c}: {currency}{a:.2f}" for c, a in top_cats]) or "  (none yet this month)"
 
-    # Add forecast / risk / personality from insights if available
+    # Financial health metrics
     smart_context = ""
     try:
-        # Reuse insights logic by querying fresh data — already have it above
         days_elapsed = max(now.day, 1)
         daily_burn = total_expenses / days_elapsed if days_elapsed else 0
         wants_budget = salary * (pct_wants / 100)
         discretionary_remaining = max(wants_budget - total_expenses, 0)
         runway_days = int(discretionary_remaining / daily_burn) if daily_burn > 0.01 else 999
         bills_ratio = total_bills / salary if salary > 0 else 0
-        if bills_ratio >= 0.6:
-            risk = "HIGH (bills are very expensive)"
-        elif bills_ratio >= 0.5:
-            risk = "MEDIUM"
-        else:
-            risk = "LOW"
+        risk = "HIGH (bills are very expensive)" if bills_ratio >= 0.6 else "MEDIUM" if bills_ratio >= 0.5 else "LOW"
         if runway_days < 999:
             smart_context = f"\nFINANCIAL HEALTH METRICS:\n- Risk level: {risk}\n- Bills are {int(bills_ratio*100)}% of income\n- Discretionary runway: {runway_days} days at current pace\n- Daily burn rate: {currency}{daily_burn:.2f}/day"
+    except Exception:
+        pass
+
+    # Live FX rates
+    fx_context = ""
+    try:
+        import time as _time
+        rates = None
+        if _fx_cache.get("data") and (_time.time() - _fx_cache.get("ts", 0)) < _fx_cache_ttl:
+            rates = _fx_cache["data"]
+        else:
+            async with httpx.AsyncClient(timeout=6.0) as http:
+                bases: dict = {}
+                for base, quote in DEFAULT_FX_PAIRS:
+                    bases.setdefault(base, []).append(quote)
+                fresh = []
+                for base, quotes in bases.items():
+                    try:
+                        r = await http.get(f"https://api.frankfurter.dev/v1/latest?base={base}&symbols={','.join(quotes)}")
+                        if r.status_code == 200:
+                            d = r.json()
+                            for q, rate in d.get("rates", {}).items():
+                                fresh.append({"base": base, "quote": q, "rate": rate, "date": d.get("date")})
+                    except Exception:
+                        continue
+                if fresh:
+                    _fx_cache["data"] = fresh
+                    _fx_cache["ts"] = _time.time()
+                    rates = fresh
+        if rates:
+            rate_lines = "\n".join(f"  {r['base']}/{r['quote']}: {r['rate']:.4f}  (as of {r.get('date','today')})" for r in rates)
+            fx_context = f"\n\nLIVE EXCHANGE RATES (ECB/Frankfurter data):\n{rate_lines}"
     except Exception:
         pass
 
@@ -652,7 +737,7 @@ THIS MONTH'S EXPENSES SO FAR (total {currency}{total_expenses:.2f}):
 Top categories:
 {cat_lines}
 
-Remaining disposable after bills: {currency}{max(salary - total_bills, 0):.2f}{smart_context}
+Remaining disposable after bills: {currency}{max(salary - total_bills, 0):.2f}{smart_context}{fx_context}
 """
 
 ADVISOR_SYSTEM_PROMPT = """You are FinBot, a friendly, concise personal-finance coach built into the FinFlow app.
@@ -668,7 +753,14 @@ GUIDELINES:
 - When giving numbers, be realistic — don't over-promise.
 - Format with short paragraphs, bullet points, or numbered steps for clarity.
 - If the user asks something unrelated to personal finance, politely redirect.
-- Never give legal, tax, or investment-advice disclaimers unless the user asks specifically about investing/taxes."""
+- Never give legal, tax, or investment-advice disclaimers unless the user asks specifically about investing/taxes.
+
+LIVE MARKET DATA:
+- You have access to live exchange rates in the context under "LIVE EXCHANGE RATES".
+- When the user asks about currency rates (e.g. "how is the dollar today?", "what is USD/BRL?", "euro rate?"), answer directly using those rates — state the exact rate and the date it was fetched.
+- Always clarify the rate is from ECB/Frankfurter data and refreshes every 15 minutes.
+- If a rate pair is not in the list, say so clearly rather than guessing.
+- You may also connect exchange rate movements to the user's personal finances when relevant."""
 
 def _lang_directive(lang: Optional[str]) -> str:
     name = LANGUAGE_NAMES.get(lang or "en", "English")
