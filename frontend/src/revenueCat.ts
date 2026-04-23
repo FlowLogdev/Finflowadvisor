@@ -6,6 +6,9 @@ import { Platform } from 'react-native';
 const IOS_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY || '';
 const ANDROID_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY || '';
 
+// RevenueCat entitlement identifier (must exactly match the RevenueCat dashboard).
+const PREMIUM_ENTITLEMENT = 'FinFlowAdvisors Pro';
+
 export type RcPackage = {
   identifier: string;           // '$rc_monthly' | '$rc_annual'
   productId: string;            // 'finflow_premium_monthly' | 'finflow_premium_yearly'
@@ -92,7 +95,7 @@ export async function purchaseRcPackage(
     const pkg = offerings?.current?.availablePackages?.find((p: any) => p.identifier === identifier);
     if (!pkg) return { success: false, premium: false, error: 'Package not found' };
     const result: any = await Purchases.purchasePackage(pkg);
-    const isPremium = !!result?.customerInfo?.entitlements?.active?.premium;
+    const isPremium = !!result?.customerInfo?.entitlements?.active?.[PREMIUM_ENTITLEMENT];
     return { success: true, premium: isPremium };
   } catch (e: any) {
     if (e?.userCancelled) {
@@ -107,7 +110,7 @@ export async function restoreRcPurchases(): Promise<{ premium: boolean; error?: 
   try {
     const Purchases = (await import('react-native-purchases')).default;
     const info: any = await Purchases.restorePurchases();
-    const isPremium = !!info?.entitlements?.active?.premium;
+    const isPremium = !!info?.entitlements?.active?.[PREMIUM_ENTITLEMENT];
     return { premium: isPremium };
   } catch (e: any) {
     return { premium: false, error: e?.message?.slice(0, 200) || 'Restore failed' };
@@ -119,7 +122,7 @@ export async function getRcSubscriptionState(): Promise<RcSubscriptionState | nu
   try {
     const Purchases = (await import('react-native-purchases')).default;
     const info: any = await Purchases.getCustomerInfo();
-    const premiumEnt = info?.entitlements?.active?.premium;
+    const premiumEnt = info?.entitlements?.active?.[PREMIUM_ENTITLEMENT];
     if (!premiumEnt) {
       return { premium: false, managementURL: info?.managementURL };
     }
