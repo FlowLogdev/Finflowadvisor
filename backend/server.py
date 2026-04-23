@@ -1061,6 +1061,327 @@ async def remove_watchlist(symbol: str, user: dict = Depends(get_current_user)):
     return {"deleted": True}
 
 
+# ── Investments: Rates, Institutions, Projections, AI Advice ────────
+
+FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
+_rates_cache: dict = {"ts": 0, "data": None}
+_rates_cache_ttl = 3600  # 1h
+
+# Curated institution reference data (rates updated periodically)
+BR_INSTITUTIONS = [
+    {"name": "Nubank",          "product": "Caixinha Turbo (CDB)",    "rate_label": "100% CDI",       "rate_pct_cdi": 100, "min_amount": 1,      "liquidity": "daily",      "safety": "FGC",  "url": "https://nubank.com.br/investimentos/", "emoji": "💜"},
+    {"name": "BTG Pactual",     "product": "CDB BTG+",                "rate_label": "100–115% CDI",   "rate_pct_cdi": 108, "min_amount": 100,    "liquidity": "daily",      "safety": "FGC",  "url": "https://www.btgpactualdigital.com/",   "emoji": "⚫"},
+    {"name": "XP Investimentos","product": "CDB XP",                  "rate_label": "100–118% CDI",   "rate_pct_cdi": 110, "min_amount": 1000,   "liquidity": "on maturity","safety": "FGC",  "url": "https://www.xpi.com.br/",              "emoji": "⭐"},
+    {"name": "Itaú",            "product": "CDB DI",                  "rate_label": "95–100% CDI",    "rate_pct_cdi": 98,  "min_amount": 500,    "liquidity": "daily",      "safety": "FGC",  "url": "https://www.itau.com.br/",             "emoji": "🟠"},
+    {"name": "Bradesco",        "product": "CDB Bradesco",            "rate_label": "95–102% CDI",    "rate_pct_cdi": 98,  "min_amount": 500,    "liquidity": "daily",      "safety": "FGC",  "url": "https://banco.bradesco/",              "emoji": "🔴"},
+]
+US_INSTITUTIONS = [
+    {"name": "Marcus (Goldman Sachs)", "product": "High-Yield Savings", "rate_label": "4.40% APY", "rate_apy": 4.40, "min_amount": 0,   "liquidity": "daily",          "safety": "FDIC", "url": "https://www.marcus.com/us/en/savings",  "emoji": "🏛️"},
+    {"name": "Ally Bank",              "product": "Online Savings",     "rate_label": "4.00% APY", "rate_apy": 4.00, "min_amount": 0,   "liquidity": "daily",          "safety": "FDIC", "url": "https://www.ally.com/bank/online-savings-account/", "emoji": "🅰️"},
+    {"name": "SoFi",                   "product": "Savings",            "rate_label": "4.60% APY", "rate_apy": 4.60, "min_amount": 0,   "liquidity": "daily",          "safety": "FDIC", "url": "https://www.sofi.com/banking/",         "emoji": "💙"},
+    {"name": "Discover",               "product": "Online Savings",     "rate_label": "3.75% APY", "rate_apy": 3.75, "min_amount": 0,   "liquidity": "daily",          "safety": "FDIC", "url": "https://www.discover.com/online-banking/savings-account/", "emoji": "🟧"},
+    {"name": "CIT Bank",               "product": "Platinum Savings",   "rate_label": "4.85% APY", "rate_apy": 4.85, "min_amount": 5000,"liquidity": "daily",          "safety": "FDIC", "url": "https://www.cit.com/cit-bank/bank/platinum-savings", "emoji": "💠"},
+]
+
+async def _fetch_bcb_series(http: httpx.AsyncClient, series_id: int) -> Optional[float]:
+    """Banco Central do Brasil SGS — series 11=Selic daily, 12=CDI daily, 4189=Selic target annual."""
+    try:
+        url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{series_id}/dados/ultimos/1?formato=json"
+        r = await http.get(url)
+        if r.status_code == 200:
+            data = r.json()
+            if data and isinstance(data, list):
+                return float(data[0]["valor"])
+    except Exception:
+        pass
+    return None
+
+async def _fetch_fred_series(http: httpx.AsyncClient, series_id: str) -> Optional[float]:
+    """FRED latest observation (e.g., FEDFUNDS, DGS10, DGS5, DGS1)."""
+    if not FRED_API_KEY:
+        return None
+    try:
+        r = await http.get(
+            "https://api.stlouisfed.org/fred/series/observations",
+            params={
+                "series_id": series_id,
+                "api_key": FRED_API_KEY,
+                "file_type": "json",
+                "sort_order": "desc",
+                "limit": 5,
+            },
+        )
+        if r.status_code == 200:
+            obs = r.json().get("observations", [])
+            for o in obs:
+                v = o.get("value")
+                if v not in (None, ".", ""):
+                    return float(v)
+    except Exception:
+        pass
+    return None
+
+
+@api_router.get("/investments/rates")
+async def investment_rates(user: dict = Depends(get_current_user)):
+    """Live benchmark rates from BCB (Brazil) + FRED (USA)."""
+    import time
+    now = time.time()
+    if _rates_cache["data"] and (now - _rates_cache["ts"]) < _rates_cache_ttl:
+        return {**_rates_cache["data"], "cached": True}
+
+    br: dict = {}
+    us: dict = {}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            # Brazil: Selic target (annual), Selic overnight daily, CDI daily, Poupança monthly
+            selic_target = await _fetch_bcb_series(http, 4189)   # Selic meta anual %
+            cdi_daily    = await _fetch_bcb_series(http, 12)      # CDI over daily %
+            # Annualise daily CDI (252 business days)
+            cdi_annual = None
+            if cdi_daily is not None:
+                cdi_annual = ((1 + cdi_daily / 100) ** 252 - 1) * 100
+            # Poupança rule: if Selic meta > 8.5% → 0.5%/mo + TR ≈ 6.17%/yr. Otherwise 70% Selic.
+            poupanca_annual = 6.17 if (selic_target or 0) > 8.5 else (selic_target or 0) * 0.7
+            br = {
+                "selic_annual_pct": round(selic_target, 2) if selic_target else None,
+                "cdi_annual_pct":   round(cdi_annual, 2)   if cdi_annual  else None,
+                "poupanca_annual_pct": round(poupanca_annual, 2) if poupanca_annual else None,
+                "ipca_note": "Reference benchmarks from Banco Central do Brasil.",
+            }
+
+            # USA: FEDFUNDS (Fed funds effective), DGS1 (1Y), DGS5 (5Y), DGS10 (10Y)
+            fed     = await _fetch_fred_series(http, "FEDFUNDS")
+            t1y     = await _fetch_fred_series(http, "DGS1")
+            t5y     = await _fetch_fred_series(http, "DGS5")
+            t10y    = await _fetch_fred_series(http, "DGS10")
+            # Average HYSA APY rough = fed_funds - 1.0% (conservative estimate)
+            hysa_avg = max(0.5, (fed or 0) - 1.0) if fed else 4.0
+            us = {
+                "fed_funds_pct": round(fed, 2)  if fed  else None,
+                "treasury_1y_pct":  round(t1y, 2)  if t1y  else None,
+                "treasury_5y_pct":  round(t5y, 2)  if t5y  else None,
+                "treasury_10y_pct": round(t10y, 2) if t10y else None,
+                "hysa_avg_pct":     round(hysa_avg, 2),
+            }
+    except Exception as e:
+        logger.exception("Investment rates error")
+        # Don't crash — return whatever we have
+        br = br or {}
+        us = us or {}
+
+    # Fallback sane defaults if APIs gave nothing (API outage)
+    if not br.get("cdi_annual_pct"):
+        br.setdefault("selic_annual_pct",   10.75)
+        br.setdefault("cdi_annual_pct",     10.65)
+        br.setdefault("poupanca_annual_pct", 6.17)
+        br["fallback"] = True
+    if not us.get("fed_funds_pct"):
+        us.setdefault("fed_funds_pct",    5.33)
+        us.setdefault("treasury_1y_pct",  4.80)
+        us.setdefault("treasury_5y_pct",  4.20)
+        us.setdefault("treasury_10y_pct", 4.25)
+        us.setdefault("hysa_avg_pct",     4.30)
+        us["fallback"] = True
+
+    payload = {
+        "br": br,
+        "us": us,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _rates_cache["data"] = payload
+    _rates_cache["ts"] = now
+    return {**payload, "cached": False}
+
+
+@api_router.get("/investments/institutions")
+async def investment_institutions(country: str = "br", user: dict = Depends(get_current_user)):
+    c = (country or "br").lower()
+    if c == "br":
+        return {"country": "BR", "institutions": BR_INSTITUTIONS,
+                "safety_note": "All listed Brazilian institutions are FGC-protected up to R$250.000 per CPF per institution."}
+    if c == "us":
+        return {"country": "US", "institutions": US_INSTITUTIONS,
+                "safety_note": "All listed US institutions are FDIC-insured up to $250,000 per depositor per bank."}
+    raise HTTPException(status_code=400, detail="country must be 'br' or 'us'")
+
+
+class ProjectReq(BaseModel):
+    initial: float = 0
+    monthly: float = 0
+    period_months: int = 12
+    # Optional — if omitted, backend uses live rates
+    scenarios: Optional[dict] = None   # e.g. {"cdb": 11.0, "poupanca": 6.17, "tesouro": 10.5}
+
+@api_router.post("/investments/project")
+async def investment_project(data: ProjectReq, user: dict = Depends(get_current_user)):
+    if data.period_months <= 0 or data.period_months > 600:
+        raise HTTPException(status_code=400, detail="period_months must be between 1 and 600")
+    if data.initial < 0 or data.monthly < 0:
+        raise HTTPException(status_code=400, detail="Amounts must be non-negative")
+
+    # Get current rates
+    try:
+        rates_resp = await investment_rates(user)  # reuse cached
+    except Exception:
+        rates_resp = {"br": {"cdi_annual_pct": 10.65, "poupanca_annual_pct": 6.17},
+                      "us": {"treasury_10y_pct": 4.25, "hysa_avg_pct": 4.30}}
+
+    # Build scenarios: 3 lines for each country, merged into one payload.
+    # Frontend picks which to display based on user's active tab.
+    br = rates_resp.get("br", {})
+    us = rates_resp.get("us", {})
+    s = data.scenarios or {}
+    # Prioritise user-supplied overrides, then live rates, then fallbacks
+    cdb_rate       = float(s.get("cdb",      br.get("cdi_annual_pct", 10.65) * 1.05))   # 105% CDI typical
+    poupanca_rate  = float(s.get("poupanca", br.get("poupanca_annual_pct", 6.17)))
+    tesouro_rate   = float(s.get("tesouro",  br.get("cdi_annual_pct", 10.65)))
+    hysa_rate      = float(s.get("hysa",     us.get("hysa_avg_pct", 4.30)))
+    savings_rate   = float(s.get("savings",  0.45))                                     # Chase/BOA avg
+    ustreasury_rate= float(s.get("ustreasury", us.get("treasury_10y_pct", 4.25)))
+
+    def simulate(annual_pct: float) -> list:
+        """Monthly compounding series. Returns list of (month, balance)."""
+        r = (1 + annual_pct / 100) ** (1 / 12) - 1
+        bal = data.initial
+        series = [{"month": 0, "balance": round(bal, 2)}]
+        for m in range(1, data.period_months + 1):
+            bal = bal * (1 + r) + data.monthly
+            series.append({"month": m, "balance": round(bal, 2)})
+        return series
+
+    total_invested = data.initial + data.monthly * data.period_months
+
+    def pack(annual: float) -> dict:
+        series = simulate(annual)
+        final = series[-1]["balance"]
+        return {
+            "annual_rate_pct": round(annual, 2),
+            "series": series,
+            "final_amount": round(final, 2),
+            "total_invested": round(total_invested, 2),
+            "total_earnings": round(final - total_invested, 2),
+        }
+
+    return {
+        "period_months": data.period_months,
+        "total_invested": round(total_invested, 2),
+        "br": {
+            "cdb":      pack(cdb_rate),
+            "tesouro":  pack(tesouro_rate),
+            "poupanca": pack(poupanca_rate),
+        },
+        "us": {
+            "hysa":       pack(hysa_rate),
+            "ustreasury": pack(ustreasury_rate),
+            "savings":    pack(savings_rate),
+        },
+    }
+
+
+class AdviceReq(BaseModel):
+    country: str = "br"       # "br" or "us"
+    goal_name: Optional[str] = None
+    goal_amount: Optional[float] = None
+    time_horizon_months: Optional[int] = None
+
+@api_router.post("/investments/advice")
+async def investment_advice(data: AdviceReq, user: dict = Depends(get_current_user)):
+    """AI-generated personalized investment advice using Emergent LLM + user's budget context."""
+    uid = user["_id"]
+    country = (data.country or "br").lower()
+
+    # Pull user's budget context
+    settings = await db.settings.find_one({"user_id": uid}) or {}
+    salary = float(settings.get("salary", 0))
+    pct_savings = float(settings.get("pctSavings", 20))
+    currency = settings.get("currency", "R$" if country == "br" else "$")
+    monthly_savings = round(salary * pct_savings / 100, 2)
+
+    # Pull recent expenses to know if they're on-track
+    try:
+        expenses = await db.expenses.find({"user_id": uid}).sort("date", -1).to_list(100)
+        recent_total = sum(float(e.get("amount", 0)) for e in expenses)
+    except Exception:
+        recent_total = 0
+
+    # Pull live rates
+    try:
+        rates_resp = await investment_rates(user)
+    except Exception:
+        rates_resp = {}
+    br = rates_resp.get("br", {})
+    us = rates_resp.get("us", {})
+
+    # Decide recommendation buckets by amount
+    if country == "br":
+        benchmark = br.get("cdi_annual_pct", 10.65)
+        if monthly_savings < 1000:
+            bucket = "Nubank Caixinha Turbo (100% CDI, liquidez diária) ou Tesouro Selic"
+        elif monthly_savings < 10000:
+            bucket = "CDB BTG+ (105–110% CDI) com liquidez diária"
+        else:
+            bucket = "Tesouro IPCA+ 2029 ou CDB XP longo prazo para melhor rendimento"
+    else:
+        benchmark = us.get("hysa_avg_pct", 4.30)
+        if monthly_savings < 200:
+            bucket = "SoFi or Marcus HYSA (4%+ APY, daily access)"
+        elif monthly_savings < 2000:
+            bucket = "CIT Platinum (4.85% APY) or 1-year CD"
+        else:
+            bucket = "Mix of 5Y Treasury + HYSA for liquidity buffer"
+
+    # Compose compact system prompt with context
+    ctx = (
+        f"User country: {country.upper()}\n"
+        f"Monthly net salary: {currency}{salary}\n"
+        f"Monthly savings allocation ({pct_savings}%): {currency}{monthly_savings}\n"
+        f"Current benchmark rate: {benchmark}% /yr ({'CDI' if country == 'br' else 'HYSA avg'})\n"
+        f"Recent expense total tracked: {currency}{recent_total}\n"
+        f"Goal: {data.goal_name or '(none)'} — target {currency}{data.goal_amount or 0} in {data.time_horizon_months or 0} months\n"
+        f"Suggested bucket: {bucket}\n"
+    )
+
+    system = (
+        "You are FinBot, a concise, practical personal finance coach for FinFlowAdvisors. "
+        "Give 3–5 short, actionable bullet points tailored to the user's country (Brazil uses R$/CDI/Selic/Tesouro; "
+        "USA uses $/HYSA/Treasury/CDs). Avoid heavy jargon. NEVER recommend specific stocks or speculative assets. "
+        "Focus on safe fixed-income: savings accounts, CDBs (BR), HYSAs/CDs/Treasuries (US). "
+        "If the goal is unrealistic given savings rate, say so kindly and suggest adjustments. "
+        "End with one short motivational line. Output plain text only, no markdown headers."
+    )
+
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        emergent_key = os.environ.get("EMERGENT_LLM_KEY", "")
+        if not emergent_key:
+            return {"advice": f"Based on your {currency}{monthly_savings}/month savings, we suggest: {bucket}.",
+                    "bucket": bucket, "monthly_savings": monthly_savings, "fallback": True}
+        chat = (
+            LlmChat(api_key=emergent_key, session_id=f"invest-advice-{uid}-{country}", system_message=system)
+            .with_model("openai", "gpt-4.1-mini")
+        )
+        reply = await chat.send_message(UserMessage(text=ctx))
+        return {
+            "advice": reply.strip() if isinstance(reply, str) else str(reply),
+            "bucket": bucket,
+            "monthly_savings": monthly_savings,
+            "currency": currency,
+            "benchmark_pct": benchmark,
+        }
+    except Exception as e:
+        logger.exception("Investment advice LLM error")
+        return {
+            "advice": f"Based on your {currency}{monthly_savings}/month savings, we suggest: {bucket}. "
+                      f"Start small, automate the transfer, and let compounding do the work.",
+            "bucket": bucket,
+            "monthly_savings": monthly_savings,
+            "currency": currency,
+            "benchmark_pct": benchmark,
+            "fallback": True,
+        }
+
+
 # ── Local Export (CSV / XLSX) ───────────────────────────────────────
 import io, csv, base64 as _b64
 from openpyxl import Workbook

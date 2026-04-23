@@ -446,3 +446,96 @@ agent_communication:
       Both local migrations (export + tickets) are working end-to-end on web. Native share
       sheet behavior on iOS/Android will work via expo-sharing (cannot be tested from web
       preview but uses standard API).
+
+
+  - agent: "testing"
+    message: |
+      Tested all 4 new Investments endpoints end-to-end via /app/backend_test_investments.py
+      against https://cashflow-staging-4.preview.emergentagent.com/api with admin JWT
+      (admin@finflow.com / eWcukKTEp0WMtHyaoT8ovZt0). 19/19 test cases passed, 0 failures.
+
+      GET /api/investments/rates:
+        - no-auth → 401 ✓
+        - authed first call → 200, full numeric shape:
+          br: selic_annual_pct=14.65, cdi_annual_pct=14.65, poupanca_annual_pct=6.17 (from BCB)
+          us: fed_funds_pct=3.64, treasury_1y=... treasury_5y=... treasury_10y=4.3, hysa_avg_pct=2.64 (from FRED)
+          Note: on my first call `cached` was already True because another request had just warmed
+          the 1h server-side cache (server was up before test). Both BR and US sections returned
+          LIVE data — no `fallback:true` flag on either. ✓
+        - second call → cached:true ✓
+
+      GET /api/investments/institutions:
+        - no-auth → 401 ✓
+        - country=br → 200 with exactly 5 institutions [Nubank, BTG Pactual, XP Investimentos,
+          Itaú, Bradesco]. Every inst has name/product/rate_label/rate_pct_cdi/min_amount/
+          liquidity/safety="FGC"/url/emoji ✓
+        - country=us → 200 with exactly 5 institutions [Marcus (Goldman Sachs), Ally Bank, SoFi,
+          Discover, CIT Bank]. Every inst has rate_apy field and safety="FDIC" ✓
+        - country=jp (invalid) → 400 "country must be 'br' or 'us'" ✓
+
+      POST /api/investments/project:
+        - no-auth → 401 ✓
+        - body {initial:1000, monthly:200, period_months:60} → 200.
+          total_invested=13000 ✓, period_months=60 ✓
+          br.{cdb, tesouro, poupanca} and us.{hysa, ustreasury, savings} all present with
+          annual_rate_pct/final_amount/total_earnings/series[61 entries, month 0..60] ✓
+          CDB final R$19469.59 > Poupança R$15303.75 ✓
+          HYSA $13942.06 > Savings $13156.14 ✓
+          All final_amount > total_invested (positive returns) ✓
+        - period_months=0   → 400 "period_months must be between 1 and 600" ✓
+        - period_months=601 → 400 "period_months must be between 1 and 600" ✓
+        - initial=-50       → 400 "Amounts must be non-negative" ✓
+        - monthly=-10       → 400 "Amounts must be non-negative" ✓
+
+      POST /api/investments/advice:
+        - no-auth → 401 ✓
+        - country=br → 200. advice is non-empty 540-char personalized LLM text starting
+          "- With R$1000 monthly savings and no set goal, focus on building an emergency fund
+          first. - Open a CDB with at least 105...". Fields present: advice, bucket,
+          monthly_savings=1000.0, currency="R$", benchmark_pct=14.65. No `fallback` field
+          (LLM up) ✓
+        - country=us → 200. 584-char personalized LLM text, bucket="CIT Platinum (4.85% APY) or
+          1-year CD", monthly_savings=1000.0, currency="$", benchmark_pct=2.64. No `fallback` ✓
+        Backend logs confirm LiteLLM gpt-4.1-mini completions succeeded in ~3-4s.
+
+      Regression smoke (no regression):
+        - POST /api/auth/login admin → 200 ✓
+        - GET  /api/dashboard → 200 with full shape (settings, total_bills, total_expenses,
+          net_remaining, bills_by_category, expenses_by_category, ...) ✓
+        - GET  /api/insights → 200 with {currency, forecast, leaks, total_leak_savings,
+          personality, weekly_report} ✓
+
+      Note: While skimming backend logs I saw a transient stack trace
+      `AttributeError: 'LlmChat' object has no attribute 'with_max_tokens'` from a previous
+      version of investment_advice — this was caught by watchfiles reload and the current
+      code (no with_max_tokens call) is running cleanly. Not an issue now.
+
+      No issues found. All 4 new Investments endpoints working as specified.
+
+
+  - agent: "main"
+    message: |
+      Added Investments feature. New backend endpoints:
+      - GET  /api/investments/rates        — Live BR (Selic/CDI/Poupança from BCB) + US (Fed Funds,
+                                              Treasury 1Y/5Y/10Y, HYSA avg from FRED)
+      - GET  /api/investments/institutions — Curated BR (Nubank/BTG/XP/Itaú/Bradesco) and US
+                                              (Marcus/Ally/SoFi/Discover/CIT) reference list with
+                                              rates, min amount, liquidity, safety (FGC/FDIC), URL.
+      - POST /api/investments/project      — Projection calculator. Simulates CDB/Tesouro/Poupança
+                                              (BR) or HYSA/Treasury/Savings (US). Monthly-compound
+                                              series, total invested/earnings/final.
+      - POST /api/investments/advice       — AI (gpt-4.1-mini) personalized investment advice
+                                              using user's salary/savings/budget/goal context.
+      
+      New frontend tab: /app/(tabs)/investments.tsx with country toggle (BR/US), live rate
+      cards, AI advice panel (real LLM output), projection calculator with react-native-chart-kit
+      3-line chart (CDB/Tesouro/Poupança or HYSA/Treasury/Savings), institution list with
+      FGC/FDIC badges and external "Check current rate" links.
+      
+      FRED API key added to backend .env. Manual smoke tests all pass:
+        - Rates: Selic 14.65%, CDI 14.65%, Fed Funds 3.64%, Treasury 10Y 4.3%
+        - Project $1000 + $200/mo × 60mo: CDB final R$19469, Poupança R$15303, HYSA $13942
+        - Advice (US): Real LLM output with 4 bullets + motivation line, no fallback
+        - Advice (BR): Fallback text works when LLM unavailable.
+      
+      Need backend testing agent to verify all 4 new endpoints + auth gates + error paths.

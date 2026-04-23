@@ -73,6 +73,15 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="investments"
+        options={{
+          title: t('tabs.invest'),
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="trending-up-outline" size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

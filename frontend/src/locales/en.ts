@@ -29,6 +29,7 @@ const en = {
     expenses: 'Expenses',
     dashboard: 'Dashboard',
     advisor: 'AI Advisor',
+    invest: 'Invest',
   },
   landing: {
     headline: 'Take control of your',

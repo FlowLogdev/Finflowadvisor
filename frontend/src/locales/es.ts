@@ -29,6 +29,7 @@ const es = {
     expenses: 'Gastos',
     dashboard: 'Panel',
     advisor: 'Asesor IA',
+    invest: 'Invertir',
   },
   landing: {
     headline: 'Toma el control de tus',

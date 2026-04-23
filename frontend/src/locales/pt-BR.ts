@@ -29,6 +29,7 @@ const ptBR = {
     expenses: 'Despesas',
     dashboard: 'Painel',
     advisor: 'Consultor IA',
+    invest: 'Investir',
   },
   landing: {
     headline: 'Assuma o controle das suas',
