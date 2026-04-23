@@ -1,314 +1,336 @@
 """
-Backend tests for newly added LOCAL endpoints in /app/backend/server.py:
-  - POST /api/export/file (csv, xlsx)
-  - POST /api/support/ticket (public)
-  - GET  /api/admin/support/tickets
-  - POST /api/admin/support/tickets/{ticket_number}/reply
-  - POST /api/admin/support/tickets/{ticket_number}/close
-
-Plus smoke tests on /api/auth/login and /api/dashboard.
+Backend tests for new endpoints:
+- GET  /api/immune-score
+- GET  /api/subscription-graveyard
+- PATCH /api/subscription-graveyard/{id}/toggle-unused
+- POST /api/future-self
+- POST /api/ai-advisor/chat (live FX context)
+- Regression: /api/auth/login, /api/dashboard, /api/insights,
+  /api/investments/rates, /api/markets/fx
 """
-import base64
-import uuid
+import os
 import sys
+import json
+import re
+import time
 import requests
+from pathlib import Path
 
-BASE = "https://cashflow-staging-4.preview.emergentagent.com/api"
+# Load backend URL from frontend .env (public URL is EXPO_PUBLIC_BACKEND_URL)
+FRONTEND_ENV = Path("/app/frontend/.env")
+BASE = None
+for line in FRONTEND_ENV.read_text().splitlines():
+    if line.startswith("EXPO_PUBLIC_BACKEND_URL="):
+        BASE = line.split("=", 1)[1].strip().strip('"')
+        break
+assert BASE, "Could not find EXPO_PUBLIC_BACKEND_URL"
+API = BASE.rstrip("/") + "/api"
+print(f"[CONFIG] API base: {API}")
+
 ADMIN_EMAIL = "admin@finflow.com"
 ADMIN_PASSWORD = "eWcukKTEp0WMtHyaoT8ovZt0"
 
 results = []
 
-
-def record(name, ok, detail=""):
+def record(name: str, ok: bool, detail: str = ""):
+    tag = "PASS" if ok else "FAIL"
+    print(f"[{tag}] {name}" + (f"  ::  {detail}" if detail else ""))
     results.append((name, ok, detail))
-    marker = "PASS" if ok else "FAIL"
-    print(f"[{marker}] {name} — {detail}")
 
 
-def login(email, password):
-    r = requests.post(f"{BASE}/auth/login", json={"email": email, "password": password}, timeout=20)
-    r.raise_for_status()
-    return r.json()["access_token"]
+def auth_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-def hdr(tok):
-    return {"Authorization": f"Bearer {tok}"}
+# ── Login first ───────────────────────────────────────────────────
+print("\n=== Auth ===")
+r = requests.post(f"{API}/auth/login",
+                  json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+                  timeout=30)
+record("POST /auth/login admin", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+assert r.status_code == 200, "Cannot proceed without JWT"
+TOKEN = r.json().get("token") or r.json().get("access_token")
+assert TOKEN, f"No token in login response: {r.json()}"
+H = auth_headers(TOKEN)
+print(f"[INFO] JWT acquired (len={len(TOKEN)})")
 
 
-def main():
-    try:
-        admin_tok = login(ADMIN_EMAIL, ADMIN_PASSWORD)
-        record("smoke.auth.login(admin)", True, "token acquired")
-    except Exception as e:
-        record("smoke.auth.login(admin)", False, f"{e}")
-        return
+# ────────────────────────────────────────────────────────────────
+# 1) /api/immune-score
+# ────────────────────────────────────────────────────────────────
+print("\n=== /api/immune-score ===")
+r = requests.get(f"{API}/immune-score", timeout=30)
+record("immune-score no token → 401", r.status_code == 401, f"got {r.status_code}")
 
-    # smoke dashboard
-    try:
-        r = requests.get(f"{BASE}/dashboard", headers=hdr(admin_tok), timeout=20)
-        ok = r.status_code == 200 and "settings" in r.json()
-        record("smoke.dashboard", ok, f"status={r.status_code}")
-    except Exception as e:
-        record("smoke.dashboard", False, str(e))
-
-    # register fresh user
-    email_rand = f"realuser_{uuid.uuid4().hex[:8]}@example.com"
-    user_tok = None
-    try:
-        r = requests.post(f"{BASE}/auth/register", json={
-            "name": "Alex Morgan",
-            "email": email_rand,
-            "password": "S3cureP@ss!",
-        }, timeout=20)
-        ok = r.status_code == 200 and "access_token" in r.json()
-        user_tok = r.json()["access_token"] if ok else None
-        record("setup.auth.register(user)", ok, f"status={r.status_code}")
-    except Exception as e:
-        record("setup.auth.register(user)", False, str(e))
-
-    if user_tok:
-        try:
-            requests.post(f"{BASE}/bills", headers=hdr(user_tok), json={
-                "name": "Rent", "category": "Housing", "amount": 1200, "dueDay": 1
-            }, timeout=20)
-            requests.post(f"{BASE}/expenses", headers=hdr(user_tok), json={
-                "name": "Starbucks", "category": "Dining", "amount": 7.5, "date": "2026-04-20", "recurring": False
-            }, timeout=20)
-        except Exception:
-            pass
-
-    # 1) /export/file
-    try:
-        r = requests.post(f"{BASE}/export/file", json={"format": "csv"}, timeout=20)
-        record("export.file.no_auth_401", r.status_code == 401, f"status={r.status_code}")
-    except Exception as e:
-        record("export.file.no_auth_401", False, str(e))
-
-    try:
-        r = requests.post(f"{BASE}/export/file", headers=hdr(user_tok or admin_tok),
-                          json={"format": "csv"}, timeout=30)
-        j = r.json() if r.status_code == 200 else {}
-        required = {"filename", "mime", "base64_data", "bills_count", "expenses_count"}
-        has_keys = required.issubset(j.keys()) if isinstance(j, dict) else False
-        decoded = b""
-        b64_ok = False
-        header_ok = False
-        non_empty = False
-        if has_keys:
-            try:
-                decoded = base64.b64decode(j["base64_data"])
-                b64_ok = True
-                non_empty = len(decoded) > 0
-                first_line = decoded.splitlines()[0].decode("utf-8", errors="replace") if decoded else ""
-                header_ok = first_line.strip() == "Type,Name,Category,Amount,Date/DueDay,Recurring"
-            except Exception:
-                pass
-        ok = (r.status_code == 200 and has_keys and b64_ok and non_empty and header_ok
-              and j.get("mime") == "text/csv" and j.get("filename", "").endswith(".csv"))
-        record("export.file.csv", ok,
-               f"status={r.status_code} keys={has_keys} b64_ok={b64_ok} non_empty={non_empty} header_ok={header_ok} mime={j.get('mime')} fname={j.get('filename')} bytes={len(decoded)}")
-    except Exception as e:
-        record("export.file.csv", False, str(e))
-
-    try:
-        r = requests.post(f"{BASE}/export/file", headers=hdr(user_tok or admin_tok),
-                          json={"format": "xlsx"}, timeout=30)
-        j = r.json() if r.status_code == 200 else {}
-        required = {"filename", "mime", "base64_data", "bills_count", "expenses_count"}
-        has_keys = required.issubset(j.keys()) if isinstance(j, dict) else False
-        decoded = b""
-        pk_ok = False
-        if has_keys:
-            try:
-                decoded = base64.b64decode(j["base64_data"])
-                pk_ok = decoded[:2] == b"PK"
-            except Exception:
-                pass
-        ok = (r.status_code == 200 and has_keys and pk_ok
-              and j.get("filename", "").endswith(".xlsx")
-              and "spreadsheetml" in (j.get("mime") or ""))
-        record("export.file.xlsx", ok,
-               f"status={r.status_code} keys={has_keys} PK={pk_ok} mime={j.get('mime')} fname={j.get('filename')} bytes={len(decoded)}")
-    except Exception as e:
-        record("export.file.xlsx", False, str(e))
-
-    try:
-        r = requests.post(f"{BASE}/export/file", headers=hdr(user_tok or admin_tok),
-                          json={"format": "pdf"}, timeout=20)
-        record("export.file.bad_format_400", r.status_code == 400, f"status={r.status_code}")
-    except Exception as e:
-        record("export.file.bad_format_400", False, str(e))
-
-    # 2) /support/ticket
-    ticket_number = None
-    try:
-        r = requests.post(f"{BASE}/support/ticket", json={
-            "name": "Jordan Rivera",
-            "email": "jordan.rivera@example.com",
-            "phone": "",
-            "description": "I can't see my bills on the dashboard after login."
-        }, timeout=20)
-        j = r.json() if r.status_code == 200 else {}
-        tnum = j.get("ticket_number", "") if isinstance(j, dict) else ""
-        pattern_ok = isinstance(tnum, str) and tnum.startswith("FF-") and len(tnum) == 9
-        status_ok = j.get("status") == "open"
-        created_ok = bool(j.get("created_at"))
-        ok = r.status_code == 200 and pattern_ok and status_ok and created_ok
-        if ok:
-            ticket_number = tnum
-        record("support.ticket.create", ok,
-               f"status={r.status_code} tnum={tnum} open={status_ok} created={created_ok}")
-    except Exception as e:
-        record("support.ticket.create", False, str(e))
-
-    for label, body in [
-        ("empty_name", {"name": "", "email": "a@b.com", "phone": "", "description": "hi"}),
-        ("empty_email", {"name": "X", "email": "", "phone": "", "description": "hi"}),
-        ("empty_desc", {"name": "X", "email": "a@b.com", "phone": "", "description": ""}),
-    ]:
-        try:
-            r = requests.post(f"{BASE}/support/ticket", json=body, timeout=20)
-            record(f"support.ticket.{label}_400", r.status_code == 400, f"status={r.status_code}")
-        except Exception as e:
-            record(f"support.ticket.{label}_400", False, str(e))
-
-    # 3) GET /admin/support/tickets
-    try:
-        r = requests.get(f"{BASE}/admin/support/tickets", timeout=20)
-        record("admin.tickets.list.no_auth_401", r.status_code == 401, f"status={r.status_code}")
-    except Exception as e:
-        record("admin.tickets.list.no_auth_401", False, str(e))
-
-    if user_tok:
-        try:
-            r = requests.get(f"{BASE}/admin/support/tickets", headers=hdr(user_tok), timeout=20)
-            record("admin.tickets.list.non_admin_403", r.status_code == 403, f"status={r.status_code}")
-        except Exception as e:
-            record("admin.tickets.list.non_admin_403", False, str(e))
-
-    try:
-        r = requests.get(f"{BASE}/admin/support/tickets", headers=hdr(admin_tok), timeout=20)
-        j = r.json() if r.status_code == 200 else {}
-        has_tickets = isinstance(j.get("tickets"), list)
-        contains_new = any(t.get("ticket_number") == ticket_number for t in (j.get("tickets") or [])) if ticket_number else True
-        record("admin.tickets.list.admin_ok", r.status_code == 200 and has_tickets and contains_new,
-               f"status={r.status_code} count={len(j.get('tickets') or [])} contains_created={contains_new}")
-    except Exception as e:
-        record("admin.tickets.list.admin_ok", False, str(e))
-
-    try:
-        r = requests.get(f"{BASE}/admin/support/tickets?status=open", headers=hdr(admin_tok), timeout=20)
-        j = r.json() if r.status_code == 200 else {}
-        tickets = j.get("tickets") or []
-        all_open = all(t.get("status") == "open" for t in tickets)
-        contains_new = any(t.get("ticket_number") == ticket_number for t in tickets) if ticket_number else True
-        record("admin.tickets.list.filter_open", r.status_code == 200 and all_open and contains_new,
-               f"status={r.status_code} count={len(tickets)} all_open={all_open} contains_new={contains_new}")
-    except Exception as e:
-        record("admin.tickets.list.filter_open", False, str(e))
-
-    # 4) /reply
-    if ticket_number:
-        try:
-            r = requests.post(f"{BASE}/admin/support/tickets/{ticket_number}/reply",
-                              json={"message": "hi"}, timeout=20)
-            record("admin.tickets.reply.no_auth_401", r.status_code == 401, f"status={r.status_code}")
-        except Exception as e:
-            record("admin.tickets.reply.no_auth_401", False, str(e))
-
-        if user_tok:
-            try:
-                r = requests.post(f"{BASE}/admin/support/tickets/{ticket_number}/reply",
-                                  headers=hdr(user_tok), json={"message": "hi"}, timeout=20)
-                record("admin.tickets.reply.non_admin_403", r.status_code == 403, f"status={r.status_code}")
-            except Exception as e:
-                record("admin.tickets.reply.non_admin_403", False, str(e))
-
-        reply_msg = "We're working on it — will update you shortly."
-        try:
-            r = requests.post(f"{BASE}/admin/support/tickets/{ticket_number}/reply",
-                              headers=hdr(admin_tok), json={"message": reply_msg}, timeout=20)
-            ok = r.status_code == 200 and r.json().get("ok") is True
-            record("admin.tickets.reply.admin_ok", ok, f"status={r.status_code} body={r.text[:120]}")
-        except Exception as e:
-            record("admin.tickets.reply.admin_ok", False, str(e))
-
-        try:
-            r = requests.get(f"{BASE}/admin/support/tickets", headers=hdr(admin_tok), timeout=20)
-            j = r.json()
-            target = next((t for t in j.get("tickets", []) if t.get("ticket_number") == ticket_number), None)
-            status_ok = bool(target) and target.get("status") == "replied"
-            reply_stored = bool(target) and any(rep.get("message") == reply_msg for rep in (target.get("replies") or []))
-            record("admin.tickets.reply.state_updated", status_ok and reply_stored,
-                   f"found={bool(target)} status={target.get('status') if target else None} reply_stored={reply_stored}")
-        except Exception as e:
-            record("admin.tickets.reply.state_updated", False, str(e))
-
-        try:
-            r = requests.post(f"{BASE}/admin/support/tickets/{ticket_number}/reply",
-                              headers=hdr(admin_tok), json={"message": "  "}, timeout=20)
-            record("admin.tickets.reply.empty_400", r.status_code == 400, f"status={r.status_code}")
-        except Exception as e:
-            record("admin.tickets.reply.empty_400", False, str(e))
-
-        try:
-            r = requests.post(f"{BASE}/admin/support/tickets/FF-NOPE00/reply",
-                              headers=hdr(admin_tok), json={"message": "x"}, timeout=20)
-            record("admin.tickets.reply.not_found_404", r.status_code == 404, f"status={r.status_code}")
-        except Exception as e:
-            record("admin.tickets.reply.not_found_404", False, str(e))
-
-        # 5) /close
-        try:
-            r = requests.post(f"{BASE}/admin/support/tickets/{ticket_number}/close", timeout=20)
-            record("admin.tickets.close.no_auth_401", r.status_code == 401, f"status={r.status_code}")
-        except Exception as e:
-            record("admin.tickets.close.no_auth_401", False, str(e))
-
-        if user_tok:
-            try:
-                r = requests.post(f"{BASE}/admin/support/tickets/{ticket_number}/close",
-                                  headers=hdr(user_tok), timeout=20)
-                record("admin.tickets.close.non_admin_403", r.status_code == 403, f"status={r.status_code}")
-            except Exception as e:
-                record("admin.tickets.close.non_admin_403", False, str(e))
-
-        try:
-            r = requests.post(f"{BASE}/admin/support/tickets/{ticket_number}/close",
-                              headers=hdr(admin_tok), timeout=20)
-            ok = r.status_code == 200 and r.json().get("ok") is True
-            record("admin.tickets.close.admin_ok", ok, f"status={r.status_code}")
-        except Exception as e:
-            record("admin.tickets.close.admin_ok", False, str(e))
-
-        try:
-            r = requests.get(f"{BASE}/admin/support/tickets?status=closed", headers=hdr(admin_tok), timeout=20)
-            j = r.json()
-            found = any(t.get("ticket_number") == ticket_number and t.get("status") == "closed"
-                        for t in j.get("tickets", []))
-            record("admin.tickets.close.state_closed", found, f"found_in_closed_list={found}")
-        except Exception as e:
-            record("admin.tickets.close.state_closed", False, str(e))
-
-        try:
-            r = requests.post(f"{BASE}/admin/support/tickets/FF-DOES00/close",
-                              headers=hdr(admin_tok), timeout=20)
-            record("admin.tickets.close.not_found_404", r.status_code == 404, f"status={r.status_code}")
-        except Exception as e:
-            record("admin.tickets.close.not_found_404", False, str(e))
-
-    passed = sum(1 for _, ok, _ in results if ok)
-    failed = [(n, d) for n, ok, d in results if not ok]
-    print("\n=============================================")
-    print(f"TOTAL: {len(results)}  PASS: {passed}  FAIL: {len(failed)}")
-    if failed:
-        print("Failures:")
-        for n, d in failed:
-            print(f"  - {n}: {d}")
-    print("=============================================")
-    sys.exit(0 if not failed else 1)
+r = requests.get(f"{API}/immune-score", headers=H, timeout=30)
+record("immune-score auth → 200", r.status_code == 200, f"status={r.status_code}")
+if r.status_code == 200:
+    j = r.json()
+    needed_keys = {"score", "level", "color", "description", "factors", "tips", "currency"}
+    record("immune-score has top-level keys",
+           needed_keys.issubset(set(j.keys())),
+           f"keys={sorted(j.keys())}")
+    score = j.get("score", -1)
+    record("immune-score score 0..100",
+           isinstance(score, int) and 0 <= score <= 100,
+           f"score={score}")
+    level = j.get("level")
+    record("immune-score level valid",
+           level in ("Resilient", "Stable", "Vulnerable", "At Risk"),
+           f"level={level}")
+    color = j.get("color", "")
+    record("immune-score color is hex",
+           isinstance(color, str) and re.match(r"^#[0-9a-fA-F]{6}$", color) is not None,
+           f"color={color}")
+    factors = j.get("factors", {})
+    fok = True
+    sub_scores = []
+    for key, maxv in [("emergency_fund", 35), ("obligation_ratio", 35), ("savings_rate", 30)]:
+        f = factors.get(key, {})
+        if not isinstance(f, dict):
+            fok = False
+            break
+        if not all(k in f for k in ("score", "max", "label")):
+            fok = False
+            break
+        if f.get("max") != maxv:
+            fok = False
+            break
+        sub_scores.append(f.get("score"))
+    record("immune-score factors shape",
+           fok,
+           f"factors={factors}")
+    if fok:
+        s_sum = sum(sub_scores)
+        diff = abs(s_sum - min(score, 100))
+        record("immune-score factor scores sum ~= total (±2 tolerance or capped at 100)",
+               diff <= 2 or (s_sum >= 100 and score == 100),
+               f"sum={s_sum} total={score} diff={diff}")
+    tips = j.get("tips", None)
+    record("immune-score tips is list", isinstance(tips, list), f"tips_type={type(tips).__name__}")
+    print(f"[DATA] immune-score = {json.dumps(j, indent=2)[:800]}")
 
 
-if __name__ == "__main__":
-    main()
+# ────────────────────────────────────────────────────────────────
+# 2) /api/subscription-graveyard (auth + shape)
+# ────────────────────────────────────────────────────────────────
+print("\n=== /api/subscription-graveyard ===")
+r = requests.get(f"{API}/subscription-graveyard", timeout=30)
+record("graveyard no token → 401", r.status_code == 401, f"got {r.status_code}")
+
+r = requests.get(f"{API}/subscription-graveyard", headers=H, timeout=30)
+record("graveyard auth → 200", r.status_code == 200, f"status={r.status_code}")
+graveyard0 = r.json() if r.status_code == 200 else {}
+baseline_total_monthly = 0
+baseline_waste_monthly = 0
+if graveyard0:
+    required = {"subscriptions", "total_monthly", "total_annual",
+                "total_waste_monthly", "total_waste_annual", "currency", "months_active"}
+    record("graveyard top-level keys present",
+           required.issubset(graveyard0.keys()),
+           f"keys={sorted(graveyard0.keys())}")
+    baseline_total_monthly = graveyard0.get("total_monthly", 0)
+    baseline_waste_monthly = graveyard0.get("total_waste_monthly", 0)
+    print(f"[DATA] baseline months_active={graveyard0.get('months_active')}, total_monthly={baseline_total_monthly}, total_waste={baseline_waste_monthly}")
+
+
+# 2b) POST a Subscriptions bill and verify it appears + cumulative math
+print("\n=== Create Subscriptions bill and verify graveyard ===")
+BILL_NAME = f"Netflix-Test-{int(time.time())}"
+bill_payload = {"name": BILL_NAME, "category": "Subscriptions", "amount": 15.99, "dueDay": 5}
+r = requests.post(f"{API}/bills", headers=H, json=bill_payload, timeout=30)
+record("POST /bills (Subscriptions)", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+created_bill_id = r.json().get("id") if r.status_code == 200 else None
+print(f"[DATA] new bill id={created_bill_id}")
+
+if created_bill_id:
+    r = requests.get(f"{API}/subscription-graveyard", headers=H, timeout=30)
+    graveyard1 = r.json() if r.status_code == 200 else {}
+    subs = graveyard1.get("subscriptions", [])
+    hit = next((s for s in subs if s.get("id") == created_bill_id), None)
+    record("created sub appears in graveyard",
+           hit is not None,
+           f"found={hit is not None}; total_subs={len(subs)}")
+    if hit:
+        record("created sub has required fields",
+               all(k in hit for k in ("id", "name", "monthly_cost", "cumulative_cost",
+                                      "months_active", "marked_unused", "type",
+                                      "category", "is_buried")),
+               f"keys={sorted(hit.keys())}")
+        record("created sub monthly_cost == 15.99",
+               abs(hit.get("monthly_cost", 0) - 15.99) < 0.001,
+               f"monthly={hit.get('monthly_cost')}")
+        record("created sub type == 'bill'",
+               hit.get("type") == "bill",
+               f"type={hit.get('type')}")
+        record("created sub category == 'Subscriptions'",
+               hit.get("category") == "Subscriptions",
+               f"category={hit.get('category')}")
+        record("created sub is_buried False initially",
+               hit.get("is_buried") is False,
+               f"is_buried={hit.get('is_buried')}")
+        expected_cum = round(hit.get("monthly_cost", 0) * hit.get("months_active", 0), 2)
+        record("cumulative_cost == monthly * months_active",
+               abs(hit.get("cumulative_cost", 0) - expected_cum) < 0.01,
+               f"cumulative={hit.get('cumulative_cost')} expected={expected_cum} months={hit.get('months_active')}")
+
+
+# ────────────────────────────────────────────────────────────────
+# 3) PATCH /api/subscription-graveyard/{id}/toggle-unused
+# ────────────────────────────────────────────────────────────────
+print("\n=== PATCH /subscription-graveyard/{id}/toggle-unused ===")
+r = requests.patch(f"{API}/subscription-graveyard/{created_bill_id}/toggle-unused", timeout=30)
+record("toggle no token → 401", r.status_code == 401, f"got {r.status_code}")
+
+r = requests.patch(f"{API}/subscription-graveyard/does-not-exist-uuid/toggle-unused",
+                   headers=H, timeout=30)
+record("toggle bad id → 404", r.status_code == 404, f"got {r.status_code} body={r.text[:200]}")
+
+r = requests.patch(f"{API}/subscription-graveyard/{created_bill_id}/toggle-unused",
+                   headers=H, timeout=30)
+record("toggle #1 → 200", r.status_code == 200, f"status={r.status_code}")
+mu1 = r.json().get("marked_unused") if r.status_code == 200 else None
+record("toggle #1 marked_unused True", mu1 is True, f"marked_unused={mu1}")
+
+r = requests.get(f"{API}/subscription-graveyard", headers=H, timeout=30)
+gv2 = r.json() if r.status_code == 200 else {}
+hit2 = next((s for s in gv2.get("subscriptions", []) if s.get("id") == created_bill_id), None)
+record("after toggle: is_buried True",
+       hit2 is not None and hit2.get("is_buried") is True,
+       f"is_buried={hit2.get('is_buried') if hit2 else None}")
+record("after toggle: total_waste_monthly reflects +15.99",
+       abs(gv2.get("total_waste_monthly", 0) - (baseline_waste_monthly + 15.99)) < 0.01,
+       f"waste_now={gv2.get('total_waste_monthly')} baseline={baseline_waste_monthly}")
+
+r = requests.patch(f"{API}/subscription-graveyard/{created_bill_id}/toggle-unused",
+                   headers=H, timeout=30)
+mu2 = r.json().get("marked_unused") if r.status_code == 200 else None
+record("toggle #2 marked_unused False", mu2 is False, f"marked_unused={mu2}")
+
+
+# Cleanup
+r = requests.delete(f"{API}/bills/{created_bill_id}", headers=H, timeout=30)
+print(f"[CLEANUP] delete bill status={r.status_code}")
+
+
+# ────────────────────────────────────────────────────────────────
+# 4) POST /api/future-self
+# ────────────────────────────────────────────────────────────────
+print("\n=== POST /api/future-self ===")
+r = requests.post(f"{API}/future-self", timeout=30)
+record("future-self no token → 401", r.status_code == 401, f"got {r.status_code}")
+
+r = requests.post(f"{API}/future-self", headers=H, timeout=30)
+record("future-self auth → 200", r.status_code == 200, f"status={r.status_code}")
+if r.status_code == 200:
+    j = r.json()
+    needed = {"currency", "current", "optimized", "assumptions"}
+    record("future-self top-level keys",
+           needed.issubset(j.keys()),
+           f"keys={sorted(j.keys())}")
+    assumptions = j.get("assumptions", {})
+    arp = assumptions.get("annual_return_pct")
+    record("assumptions.annual_return_pct == 7.0 (exact)",
+           arp == 7.0,
+           f"annual_return_pct={arp} type={type(arp).__name__}")
+    record("assumptions.starting_balance present",
+           "starting_balance" in assumptions,
+           f"starting={assumptions.get('starting_balance')}")
+    record("assumptions.optimization_source present",
+           "optimization_source" in assumptions,
+           f"src={assumptions.get('optimization_source')}")
+
+    cur = j.get("current", {})
+    opt = j.get("optimized", {})
+    record("current has required keys",
+           all(k in cur for k in ("monthly_savings", "monthly_spend", "projections")),
+           f"keys={sorted(cur.keys())}")
+    record("optimized has required keys",
+           all(k in opt for k in ("monthly_savings", "monthly_spend", "monthly_freed", "projections")),
+           f"keys={sorted(opt.keys())}")
+    projs = cur.get("projections", [])
+    record("current.projections has 4 entries",
+           isinstance(projs, list) and len(projs) == 4,
+           f"len={len(projs)}")
+    if len(projs) == 4:
+        years = [p.get("years") for p in projs]
+        record("projections years == [5,10,20,30]",
+               years == [5, 10, 20, 30],
+               f"years={years}")
+        balances = [p.get("balance") for p in projs]
+        record("current projections strictly increase",
+               all(balances[i] < balances[i+1] for i in range(3)),
+               f"balances={balances}")
+        ms = cur.get("monthly_savings", 0)
+        print(f"[DATA] current.monthly_savings={ms}  current balances={balances}")
+        if ms >= 4000:
+            record("30yr balance substantial (>=$5M) at high monthly_savings (>=$4000/mo)",
+                   balances[3] >= 5_000_000,
+                   f"30yr={balances[3]} monthly_savings={ms}")
+        else:
+            print(f"[INFO] Skipping $5M+ check: monthly_savings={ms} < $4000 — not applicable to this user.")
+
+    opt_projs = opt.get("projections", [])
+    record("optimized.projections has 4 entries",
+           isinstance(opt_projs, list) and len(opt_projs) == 4,
+           f"len={len(opt_projs)}")
+    if len(opt_projs) == 4:
+        opt_balances = [p.get("balance") for p in opt_projs]
+        record("optimized projections strictly increase",
+               all(opt_balances[i] < opt_balances[i+1] for i in range(3)),
+               f"balances={opt_balances}")
+
+
+# ────────────────────────────────────────────────────────────────
+# 5) AI Advisor FX context
+# ────────────────────────────────────────────────────────────────
+print("\n=== AI Advisor FX context ===")
+payload = {"message": "how is USD to BRL today?", "language": "en"}
+r = requests.post(f"{API}/ai-advisor/chat", headers=H, json=payload, timeout=120)
+record("ai-advisor chat FX → 200", r.status_code == 200, f"status={r.status_code} body={r.text[:300]}")
+if r.status_code == 200:
+    reply = r.json().get("reply", "")
+    print(f"[DATA] AI reply ({len(reply)} chars):\n{reply[:1000]}\n")
+    numeric_matches = re.findall(r"\d+\.\d+", reply)
+    record("AI reply mentions a numeric rate",
+           len(numeric_matches) > 0,
+           f"numbers_found={numeric_matches[:5]}")
+    mentions_ecb = ("ECB" in reply or "Frankfurter" in reply or "frankfurter" in reply.lower())
+    record("AI reply mentions ECB or Frankfurter",
+           mentions_ecb,
+           f"ECB_present={'ECB' in reply}  frankfurter_present={'frankfurter' in reply.lower()}")
+    has_date = bool(re.search(r"\b\d{4}-\d{2}-\d{2}\b", reply)) or bool(
+        re.search(r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\b", reply, re.I)
+    ) or bool(re.search(r"\b(today|yesterday|as of)\b", reply, re.I))
+    record("AI reply mentions a date or 'as of/today'",
+           has_date,
+           f"has_date={has_date}")
+
+
+# ────────────────────────────────────────────────────────────────
+# 6) Regression smoke
+# ────────────────────────────────────────────────────────────────
+print("\n=== Regression smoke ===")
+for path in ["/dashboard", "/insights", "/investments/rates", "/markets/fx"]:
+    r = requests.get(f"{API}{path}", headers=H, timeout=60)
+    record(f"GET {path} → 200", r.status_code == 200, f"status={r.status_code}")
+
+r = requests.post(f"{API}/auth/login",
+                  json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+                  timeout=30)
+record("POST /auth/login regression", r.status_code == 200, f"status={r.status_code}")
+
+
+# ────────────────────────────────────────────────────────────────
+# Summary
+# ────────────────────────────────────────────────────────────────
+print("\n" + "=" * 60)
+passed = sum(1 for _, ok, _ in results if ok)
+failed = sum(1 for _, ok, _ in results if not ok)
+print(f"TOTAL: {passed} PASS, {failed} FAIL out of {len(results)}")
+if failed:
+    print("\nFAILURES:")
+    for name, ok, detail in results:
+        if not ok:
+            print(f"  - {name}: {detail}")
+sys.exit(0 if failed == 0 else 1)

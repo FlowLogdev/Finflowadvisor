@@ -194,3 +194,24 @@ export const toggleSubscriptionUnused = (subId: string) =>
     `/api/subscription-graveyard/${encodeURIComponent(subId)}/toggle-unused`,
     { method: 'PATCH' },
   );
+
+// ── Future Self Projector ──────────────────────────────────────────
+export type FutureProjection = { years: number; balance: number; label: string };
+export type FuturePath = {
+  monthly_savings: number;
+  monthly_spend: number;
+  monthly_freed?: number;
+  projections: FutureProjection[];
+};
+export type FutureSelfResponse = {
+  currency: string;
+  current: FuturePath;
+  optimized: FuturePath;
+  assumptions: {
+    annual_return_pct: number;
+    starting_balance: number;
+    optimization_source: 'subscription_cleanup' | '10pct_discretionary_reduction';
+  };
+};
+export const getFutureSelf = () =>
+  api<FutureSelfResponse>('/api/future-self', { method: 'POST' });

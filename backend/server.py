@@ -624,7 +624,7 @@ async def get_future_self(user: dict = Depends(get_current_user)):
             ],
         },
         "assumptions": {
-            "annual_return_pct": ANNUAL_RETURN * 100,
+            "annual_return_pct": round(ANNUAL_RETURN * 100, 1),
             "starting_balance": round(total_saved),
             "optimization_source": "subscription_cleanup" if (sub_waste + rec_waste) > 0 else "10pct_discretionary_reduction",
         },

@@ -108,6 +108,105 @@ user_problem_statement: |
   Phase 1 (this iteration): Build AI Advisor chat tab + Daily AI insight card on Dashboard.
 
 backend:
+  - task: "GET /api/immune-score"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Verified via /app/backend_test.py against
+          https://cashflow-staging-4.preview.emergentagent.com/api with admin JWT.
+          - No token → 401 ✓
+          - Auth → 200 with exact shape {score, level, color, description, factors, tips, currency}
+          - score=65 (int, 0..100), level="Stable", color="#1a4a8a" (valid hex), tips is list
+          - factors.emergency_fund(max=35), obligation_ratio(max=35), savings_rate(max=30) all
+            present with score+max+label
+          - Factor scores sum (0+35+30=65) equals total score (65) exactly — rounding invariant holds
+
+  - task: "GET /api/subscription-graveyard"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          - No token → 401 ✓
+          - Auth → 200 with {subscriptions, total_monthly, total_annual, total_waste_monthly,
+            total_waste_annual, currency, months_active} ✓
+          - After POST /bills with category="Subscriptions" (name=Netflix-Test, amount=15.99),
+            entry appears in graveyard with type="bill", category="Subscriptions",
+            is_buried=False, marked_unused=False, monthly_cost=15.99
+          - cumulative_cost (15.99) = monthly_cost (15.99) × months_active (1) ✓
+          - months_active=1 (admin account freshly created < 30d, clamped to min 1) ✓
+
+  - task: "PATCH /api/subscription-graveyard/{id}/toggle-unused"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          - No token → 401 ✓
+          - Invalid id → 404 {"detail":"Subscription not found"} ✓
+          - Toggle #1 on valid id → {marked_unused: true}, graveyard reflects is_buried=true and
+            total_waste_monthly=15.99 (baseline 0 + 15.99) ✓
+          - Toggle #2 → {marked_unused: false} flips back correctly ✓
+
+  - task: "POST /api/future-self"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          - No token → 401 ✓
+          - Auth → 200 with {currency, current, optimized, assumptions} ✓
+          - assumptions.annual_return_pct == 7.0 EXACTLY (float, not 7.000001) ✓
+          - assumptions.starting_balance and optimization_source present
+            (src="10pct_discretionary_reduction" for admin) ✓
+          - current.projections has 4 entries, years=[5,10,20,30] in order ✓
+          - current balances [355979, 855259, 2537682, 5847263] strictly increasing ✓
+          - optimized.projections same shape, also strictly increasing ✓
+          - With admin's monthly_savings=$5000/mo, 30yr balance $5.85M (>= $5M threshold) ✓
+
+  - task: "AI Advisor FX context (LIVE rates injected in system prompt)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          POST /api/ai-advisor/chat with {"message":"how is USD to BRL today?","language":"en"}
+          returned 200. Reply (340 chars):
+            "As of 2026-04-23, the USD to BRL exchange rate is 4.9630, based on ECB/Frankfurter
+            data. This rate refreshes every 15 minutes for up-to-date accuracy. ..."
+          - Contains numeric rate "4.9630" ✓
+          - Mentions BOTH "ECB" and "Frankfurter" ✓
+          - Contains ISO date "2026-04-23" (as of) ✓
+          Confirms live FX context is being correctly injected into the system prompt and the
+          LLM is grounding its answer on it instead of guessing.
+
   - task: "AI Advisor chat endpoint"
     implemented: true
     working: true
@@ -261,16 +360,57 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "AI Advisor chat endpoint"
-    - "AI Advisor daily insight endpoint"
-    - "AI Advisor history + clear endpoints"
-    - "Auth token race-condition fix (api.ts)"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+  - agent: "testing"
+    message: |
+      Tested the 4 new endpoints + upgraded AI Advisor FX context end-to-end via
+      /app/backend_test.py against https://cashflow-staging-4.preview.emergentagent.com/api
+      with admin JWT. 51/51 test cases passed, 0 failures.
+
+      GET /api/immune-score:
+        - no-auth → 401 ✓
+        - auth → 200 with correct shape {score, level, color, description, factors, tips,
+          currency}. Admin: score=65, level="Stable", color="#1a4a8a".
+          Factor scores 0+35+30 = 65 exactly == total ✓
+
+      GET /api/subscription-graveyard:
+        - no-auth → 401 ✓, auth → 200 with all 7 required top-level keys ✓
+        - After creating bill {name:Netflix-Test, category:Subscriptions, amount:15.99}, it
+          appears in the list with type="bill", category="Subscriptions", is_buried=false,
+          and cumulative_cost 15.99 = monthly × months_active (1) ✓
+
+      PATCH /api/subscription-graveyard/{id}/toggle-unused:
+        - no-auth → 401, invalid id → 404, toggle #1 → marked_unused=true, toggle #2 → false ✓
+        - After bury: graveyard is_buried=true, total_waste_monthly correctly = baseline + 15.99 ✓
+
+      POST /api/future-self:
+        - no-auth → 401, auth → 200 ✓
+        - annual_return_pct == 7.0 EXACTLY (float), not 7.000001 ✓
+        - current.projections has 4 entries, years=[5,10,20,30] ✓
+        - Balances [355979, 855259, 2537682, 5847263] strictly increase ✓
+        - 30yr balance $5.85M with admin's $5000/mo savings (>=$5M threshold) ✓
+        - optimized projections also strictly increase ✓
+
+      AI Advisor FX context:
+        - POST /api/ai-advisor/chat {"message":"how is USD to BRL today?"} returned a
+          340-char reply containing rate "4.9630", "ECB", "Frankfurter", and date
+          "2026-04-23". LIVE FX context is successfully being injected into the system
+          prompt and the LLM is grounding its answer on real data ✓
+
+      Regression smoke (all 200):
+        - POST /api/auth/login ✓
+        - GET /api/dashboard ✓
+        - GET /api/insights ✓
+        - GET /api/investments/rates ✓
+        - GET /api/markets/fx ✓
+
+      No issues found. All 5 new/upgraded tasks marked working:true, needs_retesting:false.
+
   - agent: "main"
     message: |
       Phase 1 (AI Money Advisor) complete. Added 4 new /api/ai-advisor/* endpoints powered by
@@ -483,6 +623,26 @@ agent_communication:
           HYSA $13942.06 > Savings $13156.14 ✓
           All final_amount > total_invested (positive returns) ✓
         - period_months=0   → 400 "period_months must be between 1 and 600" ✓
+
+  - agent: "main"
+    message: |
+      Added 2 new endpoints + upgraded AI context:
+      
+      1. GET  /api/immune-score             — Financial Immune System Score (0-100) with 3
+                                              factors (emergency fund, obligation ratio,
+                                              savings rate), level, color, tips.
+      2. GET  /api/subscription-graveyard   — Lists all subscriptions (bills+recurring exp),
+                                              shows total monthly/annual, waste stats.
+      3. PATCH /api/subscription-graveyard/{id}/toggle-unused — toggle marked_unused flag.
+      4. POST /api/future-self              — Projects wealth at 5/10/20/30y horizons for
+                                              current vs optimized paths (7% return,
+                                              monthly compounding).
+      5. AI Advisor context now includes LIVE FX rates from Frankfurter + updated system
+         prompt so FinBot answers "how is the dollar today?" with actual rates.
+      
+      Manual smoke test passed for all 4 endpoints + AI chat FX query.
+      Need formal backend testing to validate shapes, auth gates, edge cases.
+
         - period_months=601 → 400 "period_months must be between 1 and 600" ✓
         - initial=-50       → 400 "Amounts must be non-negative" ✓
         - monthly=-10       → 400 "Amounts must be non-negative" ✓

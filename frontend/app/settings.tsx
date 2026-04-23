@@ -191,6 +191,15 @@ export default function SettingsScreen() {
 
           <TouchableOpacity
             style={[styles.actionRow, { borderTopWidth: 0.5, borderTopColor: c.border }]}
+            onPress={() => router.push('/future-self' as any)}
+          >
+            <Ionicons name="sparkles-outline" size={20} color={c.savings} />
+            <Text style={[styles.actionText, { color: c.textPrimary }]}>Future You 🔮</Text>
+            <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionRow, { borderTopWidth: 0.5, borderTopColor: c.border }]}
             onPress={() => handleEmailExport('csv')}
             disabled={exporting !== null}
           >
