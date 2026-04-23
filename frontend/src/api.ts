@@ -164,3 +164,33 @@ export type ImmuneScore = {
   currency: string;
 };
 export const getImmuneScore = () => api<ImmuneScore>('/api/immune-score');
+
+// ── Subscription Graveyard ─────────────────────────────────────────
+export type GraveSub = {
+  id: string;
+  name: string;
+  monthly_cost: number;
+  cumulative_cost: number;
+  months_active: number;
+  marked_unused: boolean;
+  last_used_date?: string | null;
+  type: 'bill' | 'recurring_expense';
+  category: string;
+  is_buried: boolean;
+};
+export type GraveyardResponse = {
+  subscriptions: GraveSub[];
+  total_monthly: number;
+  total_annual: number;
+  total_waste_monthly: number;
+  total_waste_annual: number;
+  currency: string;
+  months_active: number;
+};
+export const getSubscriptionGraveyard = () =>
+  api<GraveyardResponse>('/api/subscription-graveyard');
+export const toggleSubscriptionUnused = (subId: string) =>
+  api<{ marked_unused: boolean }>(
+    `/api/subscription-graveyard/${encodeURIComponent(subId)}/toggle-unused`,
+    { method: 'PATCH' },
+  );

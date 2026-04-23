@@ -182,6 +182,15 @@ export default function SettingsScreen() {
 
           <TouchableOpacity
             style={[styles.actionRow, { borderTopWidth: 0.5, borderTopColor: c.border }]}
+            onPress={() => router.push('/subscription-graveyard' as any)}
+          >
+            <Ionicons name="skull-outline" size={20} color={c.expense} />
+            <Text style={[styles.actionText, { color: c.textPrimary }]}>Subscription Graveyard</Text>
+            <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionRow, { borderTopWidth: 0.5, borderTopColor: c.border }]}
             onPress={() => handleEmailExport('csv')}
             disabled={exporting !== null}
           >

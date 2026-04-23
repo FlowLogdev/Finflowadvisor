@@ -468,6 +468,109 @@ async def get_immune_score(user: dict = Depends(get_current_user)):
         "currency": currency,
     }
 
+
+# ── Subscription Graveyard ─────────────────────────────────────────
+
+@api_router.get("/subscription-graveyard")
+async def get_subscription_graveyard(user: dict = Depends(get_current_user)):
+    uid = user["_id"]
+    settings = await db.settings.find_one({"user_id": uid}, {"_id": 0, "user_id": 0}) or {}
+    currency = settings.get("currency", "$")
+
+    sub_bills = await db.bills.find(
+        {"user_id": uid, "category": "Subscriptions"},
+        {"_id": 0, "user_id": 0},
+    ).to_list(1000)
+    rec_expenses = await db.expenses.find(
+        {"user_id": uid, "recurring": True},
+        {"_id": 0, "user_id": 0},
+    ).to_list(1000)
+
+    try:
+        user_doc = await db.users.find_one({"_id": ObjectId(uid)}, {"created_at": 1})
+    except Exception:
+        user_doc = None
+    created_at = (user_doc.get("created_at") if user_doc else None) or datetime.now(timezone.utc)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    months_active = max(1, (datetime.now(timezone.utc) - created_at).days // 30)
+
+    subscriptions = []
+    total_monthly = 0.0
+    total_waste = 0.0
+
+    for bill in sub_bills:
+        monthly = float(bill.get("amount", 0))
+        marked_unused = bill.get("marked_unused", False)
+        subscriptions.append({
+            "id": bill["id"],
+            "name": bill.get("name", ""),
+            "monthly_cost": monthly,
+            "cumulative_cost": round(monthly * months_active, 2),
+            "months_active": months_active,
+            "marked_unused": marked_unused,
+            "last_used_date": bill.get("last_used_date"),
+            "type": "bill",
+            "category": "Subscriptions",
+            "is_buried": marked_unused,
+        })
+        total_monthly += monthly
+        if marked_unused:
+            total_waste += monthly
+
+    for exp in rec_expenses:
+        monthly = float(exp.get("amount", 0))
+        marked_unused = exp.get("marked_unused", False)
+        subscriptions.append({
+            "id": exp["id"],
+            "name": exp.get("name", ""),
+            "monthly_cost": monthly,
+            "cumulative_cost": round(monthly * months_active, 2),
+            "months_active": months_active,
+            "marked_unused": marked_unused,
+            "last_used_date": exp.get("last_used_date"),
+            "type": "recurring_expense",
+            "category": exp.get("category", "Other"),
+            "is_buried": marked_unused,
+        })
+        total_monthly += monthly
+        if marked_unused:
+            total_waste += monthly
+
+    subscriptions.sort(key=lambda x: (-int(x["is_buried"]), -x["monthly_cost"]))
+
+    return {
+        "subscriptions": subscriptions,
+        "total_monthly": round(total_monthly, 2),
+        "total_annual": round(total_monthly * 12, 2),
+        "total_waste_monthly": round(total_waste, 2),
+        "total_waste_annual": round(total_waste * 12, 2),
+        "currency": currency,
+        "months_active": months_active,
+    }
+
+
+@api_router.patch("/subscription-graveyard/{sub_id}/toggle-unused")
+async def toggle_subscription_unused(sub_id: str, user: dict = Depends(get_current_user)):
+    uid = user["_id"]
+    bill = await db.bills.find_one({"id": sub_id, "user_id": uid})
+    if bill:
+        new_val = not bill.get("marked_unused", False)
+        await db.bills.update_one(
+            {"id": sub_id, "user_id": uid},
+            {"$set": {"marked_unused": new_val}},
+        )
+        return {"marked_unused": new_val}
+    exp = await db.expenses.find_one({"id": sub_id, "user_id": uid})
+    if exp:
+        new_val = not exp.get("marked_unused", False)
+        await db.expenses.update_one(
+            {"id": sub_id, "user_id": uid},
+            {"$set": {"marked_unused": new_val}},
+        )
+        return {"marked_unused": new_val}
+    raise HTTPException(status_code=404, detail="Subscription not found")
+
 # ── AI Advisor (LLM-powered personal finance coach) ────────────────
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
