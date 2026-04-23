@@ -87,28 +87,32 @@ export default function PremiumScreen() {
           Alert.alert('Error', 'Could not load in-app purchases.');
         }
       } else {
-        // Web path — use Stripe via finflowadvisors.com
-        try {
-          const [pkgs, me] = await Promise.all([
-            getPackages(),
-            getBillingMe().catch(() => ({ premium: false })),
-          ]);
-          const unified: UnifiedPackage[] = (pkgs.packages || []).map((p: BillingPackage) => ({
+        // Web path — use hardcoded pricing to avoid sister-project 503 errors.
+        // Purchases on web are disabled — users are directed to the mobile app (RevenueCat).
+        const unified: UnifiedPackage[] = [
+          {
             source: 'stripe' as const,
-            id: p.id,
-            label: p.label,
-            price: p.amount,
-            priceString: `$${p.amount.toFixed(2)}`,
-            period: p.days > 300 ? 'year' : 'month',
-          }));
-          setPackages(unified);
-          const yearly = unified.find((u) => u.period === 'year');
-          setSelected((yearly || unified[0])?.id || '');
-          setIsPremium(!!me.premium);
-          setPremiumUntil((me as any).premium_until);
-        } catch (e: any) {
-          Alert.alert('Error', 'Could not load pricing.');
-        }
+            id: 'finflow_premium_monthly',
+            label: 'Monthly',
+            price: 9.99,
+            priceString: '$9.99',
+            period: 'month',
+          },
+          {
+            source: 'stripe' as const,
+            id: 'finflow_premium_yearly',
+            label: 'Yearly',
+            price: 69.99,
+            priceString: '$69.99',
+            period: 'year',
+          },
+        ];
+        setPackages(unified);
+        setSelected('finflow_premium_yearly');
+        // Billing status check (silent — fine if sister project is down)
+        const me = await getBillingMe().catch(() => ({ premium: false }));
+        setIsPremium(!!me.premium);
+        setPremiumUntil((me as any).premium_until);
       }
       setLoading(false);
     })();
@@ -134,28 +138,13 @@ export default function PremiumScreen() {
           Alert.alert('Purchase failed', res.error);
         }
       } else {
-        // Web — Stripe
-        const origin =
-          Platform.OS === 'web' ? window.location.origin : 'https://finflowadvisors.com';
-        const res = await startCheckout(selected, origin);
-        if (!res.url) throw new Error('No checkout URL');
-        await WebBrowser.openAuthSessionAsync(res.url, origin);
-        let paid = false;
-        for (let i = 0; i < 10; i++) {
-          try {
-            const s = await pollBillingStatus(res.session_id);
-            if (s.paid || s.status === 'complete' || s.status === 'paid') { paid = true; break; }
-          } catch {}
-          await new Promise((r) => setTimeout(r, 2000));
-        }
-        if (paid) {
-          Alert.alert('🎉 Premium activated', 'Welcome to FinFlow Premium!');
-          const me = await getBillingMe().catch(() => ({ premium: false }));
-          setIsPremium(!!me.premium);
-          setPremiumUntil((me as any).premium_until);
-        } else {
-          Alert.alert('Not confirmed yet', 'Your subscription should activate shortly.');
-        }
+        // Web — purchases are disabled (sister project currently unavailable).
+        // Direct users to the native app where RevenueCat handles purchases.
+        Alert.alert(
+          'Use the mobile app',
+          'Please download FinFlowAdvisors on iOS or Android to subscribe. Purchases through the web are temporarily unavailable.',
+          [{ text: 'OK' }],
+        );
       }
     } catch (e: any) {
       Alert.alert('Checkout error', e?.message?.slice(0, 160) || 'Something went wrong');
@@ -185,10 +174,14 @@ export default function PremiumScreen() {
           );
         }
       } else {
-        const me = await getBillingMe();
+        // Web — no billing backend; fall back to silent check
+        const me = await getBillingMe().catch(() => ({ premium: false }));
         setIsPremium(!!me.premium);
-        setPremiumUntil(me.premium_until);
-        Alert.alert(me.premium ? 'Premium active' : 'No subscription found', '');
+        setPremiumUntil((me as any).premium_until);
+        Alert.alert(
+          me.premium ? 'Premium active' : 'No subscription found',
+          me.premium ? '' : 'Please subscribe using the FinFlowAdvisors iOS or Android app.',
+        );
       }
     } finally {
       setRestoring(false);

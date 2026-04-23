@@ -97,25 +97,13 @@ export default function SettingsScreen() {
 
   const handleCancelSubscription = () => {
     Alert.alert(
-      'Cancel subscription?',
-      'You\'ll keep access until the end of your billing period. You can resubscribe anytime.',
-      [
-        { text: 'Keep Premium', style: 'cancel' },
-        {
-          text: 'Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await cancelSubscription();
-              const me = await getBillingMe().catch(() => ({ premium: false }));
-              setBilling(me);
-              Alert.alert('Canceled', 'Your subscription has been canceled.');
-            } catch (e: any) {
-              Alert.alert('Error', e?.message?.slice(0, 160) || 'Could not cancel');
-            }
-          },
-        },
-      ],
+      'Manage your subscription',
+      Platform.OS === 'ios'
+        ? 'To cancel, open iOS Settings → Apple ID → Subscriptions → FinFlowAdvisors.'
+        : Platform.OS === 'android'
+          ? 'To cancel, open Google Play → Payments & subscriptions → Subscriptions.'
+          : 'To manage your subscription, please use the FinFlowAdvisors mobile app.',
+      [{ text: 'OK' }],
     );
   };
 
