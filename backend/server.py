@@ -377,6 +377,257 @@ async def reset_all_data(user: dict = Depends(get_current_user)):
 async def health():
     return {"status": "healthy"}
 
+# ── Financial Immune System Score ──────────────────────────────────
+
+@api_router.get("/immune-score")
+async def get_immune_score(user: dict = Depends(get_current_user)):
+    uid = user["_id"]
+    settings = await db.settings.find_one({"user_id": uid}, {"_id": 0, "user_id": 0}) or {}
+    bills = await db.bills.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
+    expenses = await db.expenses.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
+    goals = await db.savings_goals.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
+
+    salary = settings.get("salary", 0)
+    currency = settings.get("currency", "$")
+    total_bills = sum(b["amount"] for b in bills)
+    recurring_expenses = sum(e["amount"] for e in expenses if e.get("recurring", False))
+    total_obligations = total_bills + recurring_expenses
+    total_liquid = sum(g.get("saved", 0) for g in goals)
+    total_all_expenses = sum(e["amount"] for e in expenses)
+    net = salary - total_bills - total_all_expenses
+
+    # Factor 1: Emergency Fund Coverage (0–35 pts)
+    months_covered = (total_liquid / total_obligations) if total_obligations > 0 else (6.0 if total_liquid > 0 else 0.0)
+    if months_covered >= 6:
+        ef_score = 35.0
+    elif months_covered >= 3:
+        ef_score = 25.0 + (months_covered - 3) / 3 * 10
+    elif months_covered >= 1:
+        ef_score = 12.0 + (months_covered - 1) / 2 * 13
+    else:
+        ef_score = months_covered * 12
+
+    # Factor 2: Fixed Obligation Ratio (0–35 pts)
+    obligation_pct = (total_obligations / salary * 100) if salary > 0 else 100.0
+    if obligation_pct <= 40:
+        ob_score = 35.0
+    elif obligation_pct <= 60:
+        ob_score = 25.0 - (obligation_pct - 40) / 20 * 10
+    elif obligation_pct <= 75:
+        ob_score = 15.0 - (obligation_pct - 60) / 15 * 10
+    elif obligation_pct <= 90:
+        ob_score = 5.0 - (obligation_pct - 75) / 15 * 4
+    else:
+        ob_score = 0.0
+
+    # Factor 3: Net Savings Rate (0–30 pts)
+    savings_rate_pct = max(net / salary * 100, 0) if salary > 0 else 0.0
+    if savings_rate_pct >= 20:
+        sv_score = 30.0
+    elif savings_rate_pct >= 15:
+        sv_score = 22.0 + (savings_rate_pct - 15) / 5 * 8
+    elif savings_rate_pct >= 10:
+        sv_score = 15.0 + (savings_rate_pct - 10) / 5 * 7
+    elif savings_rate_pct >= 5:
+        sv_score = 8.0 + (savings_rate_pct - 5) / 5 * 7
+    else:
+        sv_score = savings_rate_pct / 5 * 8
+
+    total_score = min(int(round(ef_score + ob_score + sv_score)), 100)
+
+    if total_score >= 80:
+        level, color = "Resilient", "#43a047"
+        description = "Your finances could weather a major storm."
+    elif total_score >= 60:
+        level, color = "Stable", "#1a4a8a"
+        description = "You have some buffer but vulnerabilities exist."
+    elif total_score >= 40:
+        level, color = "Vulnerable", "#b8740a"
+        description = "A financial shock could strain you significantly."
+    else:
+        level, color = "At Risk", "#c84b1f"
+        description = "Immediate attention needed — low resilience."
+
+    tips = []
+    if months_covered < 3:
+        needed = max(total_obligations * 3 - total_liquid, 0)
+        tips.append(f"Build emergency fund to cover 3 months ({currency}{needed:,.0f} more needed)")
+    if obligation_pct > 60:
+        tips.append(f"Fixed obligations are {obligation_pct:.0f}% of income — aim below 60%")
+    if savings_rate_pct < 10 and salary > 0:
+        tips.append(f"Savings rate is {savings_rate_pct:.0f}% — target at least 10–20%")
+
+    return {
+        "score": total_score,
+        "level": level,
+        "color": color,
+        "description": description,
+        "factors": {
+            "emergency_fund": {
+                "score": int(round(ef_score)), "max": 35,
+                "months_covered": round(months_covered, 1),
+                "total_liquid": total_liquid, "label": "Emergency Fund",
+            },
+            "obligation_ratio": {
+                "score": int(round(ob_score)), "max": 35,
+                "pct": round(obligation_pct, 1),
+                "total_obligations": total_obligations, "label": "Fixed Obligations",
+            },
+            "savings_rate": {
+                "score": int(round(sv_score)), "max": 30,
+                "pct": round(savings_rate_pct, 1),
+                "net": net, "label": "Savings Rate",
+            },
+        },
+        "tips": tips,
+        "currency": currency,
+    }
+
+# ── Subscription Graveyard ─────────────────────────────────────────
+
+@api_router.get("/subscription-graveyard")
+async def get_subscription_graveyard(user: dict = Depends(get_current_user)):
+    uid = user["_id"]
+    settings = await db.settings.find_one({"user_id": uid}, {"_id": 0, "user_id": 0}) or {}
+    currency = settings.get("currency", "$")
+
+    sub_bills = await db.bills.find(
+        {"user_id": uid, "category": "Subscriptions"},
+        {"_id": 0, "user_id": 0}
+    ).to_list(1000)
+    rec_expenses = await db.expenses.find(
+        {"user_id": uid, "recurring": True},
+        {"_id": 0, "user_id": 0}
+    ).to_list(1000)
+
+    user_doc = await db.users.find_one({"_id": ObjectId(uid)}, {"created_at": 1})
+    created_at = user_doc.get("created_at", datetime.now(timezone.utc)) if user_doc else datetime.now(timezone.utc)
+    months_active = max(1, (datetime.now(timezone.utc) - created_at).days // 30)
+
+    subscriptions = []
+    total_monthly = 0.0
+    total_waste = 0.0
+
+    for bill in sub_bills:
+        monthly = bill["amount"]
+        marked_unused = bill.get("marked_unused", False)
+        subscriptions.append({
+            "id": bill["id"],
+            "name": bill["name"],
+            "monthly_cost": monthly,
+            "cumulative_cost": round(monthly * months_active, 2),
+            "months_active": months_active,
+            "marked_unused": marked_unused,
+            "last_used_date": bill.get("last_used_date"),
+            "type": "bill",
+            "category": "Subscriptions",
+            "is_buried": marked_unused,
+        })
+        total_monthly += monthly
+        if marked_unused:
+            total_waste += monthly
+
+    for exp in rec_expenses:
+        monthly = exp["amount"]
+        marked_unused = exp.get("marked_unused", False)
+        subscriptions.append({
+            "id": exp["id"],
+            "name": exp["name"],
+            "monthly_cost": monthly,
+            "cumulative_cost": round(monthly * months_active, 2),
+            "months_active": months_active,
+            "marked_unused": marked_unused,
+            "last_used_date": exp.get("last_used_date"),
+            "type": "recurring_expense",
+            "category": exp.get("category", "Other"),
+            "is_buried": marked_unused,
+        })
+        total_monthly += monthly
+        if marked_unused:
+            total_waste += monthly
+
+    subscriptions.sort(key=lambda x: (-int(x["is_buried"]), -x["monthly_cost"]))
+
+    return {
+        "subscriptions": subscriptions,
+        "total_monthly": round(total_monthly, 2),
+        "total_annual": round(total_monthly * 12, 2),
+        "total_waste_monthly": round(total_waste, 2),
+        "total_waste_annual": round(total_waste * 12, 2),
+        "currency": currency,
+        "months_active": months_active,
+    }
+
+@api_router.patch("/subscription-graveyard/{sub_id}/toggle-unused")
+async def toggle_subscription_unused(sub_id: str, user: dict = Depends(get_current_user)):
+    uid = user["_id"]
+    bill = await db.bills.find_one({"id": sub_id, "user_id": uid})
+    if bill:
+        new_val = not bill.get("marked_unused", False)
+        await db.bills.update_one({"id": sub_id, "user_id": uid}, {"$set": {"marked_unused": new_val}})
+        return {"marked_unused": new_val}
+    exp = await db.expenses.find_one({"id": sub_id, "user_id": uid})
+    if exp:
+        new_val = not exp.get("marked_unused", False)
+        await db.expenses.update_one({"id": sub_id, "user_id": uid}, {"$set": {"marked_unused": new_val}})
+        return {"marked_unused": new_val}
+    raise HTTPException(status_code=404, detail="Subscription not found")
+
+# ── Future Self Projector ──────────────────────────────────────────
+
+@api_router.post("/future-self")
+async def get_future_self(user: dict = Depends(get_current_user)):
+    uid = user["_id"]
+    settings = await db.settings.find_one({"user_id": uid}) or {}
+    bills = await db.bills.find({"user_id": uid}).to_list(1000)
+    expenses = await db.expenses.find({"user_id": uid}).to_list(1000)
+    goals = await db.savings_goals.find({"user_id": uid}).to_list(1000)
+
+    salary = settings.get("salary", 0)
+    currency = settings.get("currency", "$")
+    total_bills = sum(b["amount"] for b in bills)
+    total_expenses = sum(e["amount"] for e in expenses)
+    total_saved = sum(g.get("saved", 0) for g in goals)
+    net_monthly = salary - total_bills - total_expenses
+
+    sub_waste = sum(b["amount"] for b in bills if b.get("marked_unused", False))
+    rec_waste = sum(e["amount"] for e in expenses if e.get("marked_unused", False))
+    monthly_optimization = sub_waste + rec_waste
+    if monthly_optimization == 0:
+        monthly_optimization = round(total_expenses * 0.10, 2)
+
+    optimized_net = net_monthly + monthly_optimization
+
+    ANNUAL_RETURN = 0.07
+    monthly_return = (1 + ANNUAL_RETURN) ** (1 / 12) - 1
+
+    def project(monthly_savings: float, years: int) -> int:
+        balance = float(total_saved)
+        for _ in range(years * 12):
+            balance = balance * (1 + monthly_return) + max(monthly_savings, 0)
+        return int(round(balance))
+
+    horizons = [5, 10, 20, 30]
+    return {
+        "currency": currency,
+        "current": {
+            "monthly_savings": round(max(net_monthly, 0)),
+            "monthly_spend": round(total_bills + total_expenses),
+            "projections": [{"years": y, "balance": project(max(net_monthly, 0), y), "label": f"{y}yr"} for y in horizons],
+        },
+        "optimized": {
+            "monthly_savings": round(max(optimized_net, 0)),
+            "monthly_spend": round(total_bills + total_expenses - monthly_optimization),
+            "monthly_freed": round(monthly_optimization),
+            "projections": [{"years": y, "balance": project(max(optimized_net, 0), y), "label": f"{y}yr"} for y in horizons],
+        },
+        "assumptions": {
+            "annual_return_pct": ANNUAL_RETURN * 100,
+            "starting_balance": round(total_saved),
+            "optimization_source": "subscription_cleanup" if (sub_waste + rec_waste) > 0 else "10pct_discretionary_reduction",
+        },
+    }
+
 # ── AI Advisor (LLM-powered personal finance coach) ────────────────
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage

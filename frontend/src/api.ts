@@ -143,3 +143,79 @@ export type ScenarioResult = {
 
 export const runScenario = (data: ScenarioInput) =>
   api<ScenarioResult>('/api/scenario', { method: 'POST', body: JSON.stringify(data) });
+
+// ── Financial Immune System Score ──────────────────────────────────
+export type ImmuneScoreFactor = {
+  score: number;
+  max: number;
+  label: string;
+  months_covered?: number;
+  total_liquid?: number;
+  pct?: number;
+  total_obligations?: number;
+  net?: number;
+};
+export type ImmuneScoreResponse = {
+  score: number;
+  level: 'Resilient' | 'Stable' | 'Vulnerable' | 'At Risk';
+  color: string;
+  description: string;
+  factors: {
+    emergency_fund: ImmuneScoreFactor;
+    obligation_ratio: ImmuneScoreFactor;
+    savings_rate: ImmuneScoreFactor;
+  };
+  tips: string[];
+  currency: string;
+};
+export const getImmuneScore = () => api<ImmuneScoreResponse>('/api/immune-score');
+
+// ── Subscription Graveyard ──────────────────────────────────────────
+export type GraveyardSubscription = {
+  id: string;
+  name: string;
+  monthly_cost: number;
+  cumulative_cost: number;
+  months_active: number;
+  marked_unused: boolean;
+  last_used_date: string | null;
+  type: 'bill' | 'recurring_expense';
+  category: string;
+  is_buried: boolean;
+};
+export type GraveyardResponse = {
+  subscriptions: GraveyardSubscription[];
+  total_monthly: number;
+  total_annual: number;
+  total_waste_monthly: number;
+  total_waste_annual: number;
+  currency: string;
+  months_active: number;
+};
+export const getSubscriptionGraveyard = () => api<GraveyardResponse>('/api/subscription-graveyard');
+export const toggleSubscriptionUnused = (id: string) =>
+  api<{ marked_unused: boolean }>(`/api/subscription-graveyard/${id}/toggle-unused`, { method: 'PATCH' });
+
+// ── Future Self Projector ──────────────────────────────────────────
+export type FutureSelfProjection = { years: number; balance: number; label: string };
+export type FutureSelfResponse = {
+  currency: string;
+  current: {
+    monthly_savings: number;
+    monthly_spend: number;
+    projections: FutureSelfProjection[];
+  };
+  optimized: {
+    monthly_savings: number;
+    monthly_spend: number;
+    monthly_freed: number;
+    projections: FutureSelfProjection[];
+  };
+  assumptions: {
+    annual_return_pct: number;
+    starting_balance: number;
+    optimization_source: string;
+  };
+};
+export const getFutureSelf = () =>
+  api<FutureSelfResponse>('/api/future-self', { method: 'POST', body: JSON.stringify({}) });

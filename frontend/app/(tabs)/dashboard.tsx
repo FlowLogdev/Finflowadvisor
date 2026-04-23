@@ -12,7 +12,7 @@ import { useThemeColors } from '../../src/theme';
 import { useI18n } from '../../src/i18n';
 import {
   getDashboard, createSavingsGoal, updateSavingsGoal, deleteSavingsGoal,
-  aiAdvisorInsight,
+  aiAdvisorInsight, getImmuneScore, ImmuneScoreResponse,
 } from '../../src/api';
 import { DashboardData, SavingsGoal } from '../../src/types';
 import { useAuth } from '../../src/auth';
@@ -31,6 +31,7 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [immuneScore, setImmuneScore] = useState<ImmuneScoreResponse | null>(null);
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalName, setGoalName] = useState('');
   const [goalTarget, setGoalTarget] = useState('');
@@ -51,14 +52,17 @@ export default function DashboardScreen() {
     } finally {
       setLoading(false);
     }
-    // Fetch AI insight separately (don't block dashboard render on it)
+    // Fetch non-blocking extras
     setAiLoading(true);
     try {
-      const res = await aiAdvisorInsight();
-      setAiInsight(res.insight);
+      const [insightRes, scoreRes] = await Promise.allSettled([
+        aiAdvisorInsight(),
+        getImmuneScore(),
+      ]);
+      if (insightRes.status === 'fulfilled') setAiInsight(insightRes.value.insight);
+      if (scoreRes.status === 'fulfilled') setImmuneScore(scoreRes.value);
     } catch (e) {
-      // silently fail — insight is an optional enhancement
-      setAiInsight(null);
+      // silently fail
     } finally {
       setAiLoading(false);
     }
@@ -169,6 +173,9 @@ export default function DashboardScreen() {
             <MetricCard label={t('dashboard.expenses')} value={`${cur}${total_expenses.toLocaleString()}`} color={c.warning} c={c} icon="card-outline" />
             <MetricCard label={t('dashboard.netLeft')} value={`${cur}${net_remaining.toLocaleString()}`} color={net_remaining >= 0 ? c.income : c.expense} c={c} icon="trending-up-outline" />
           </View>
+
+          {/* ── Financial Immune System Score ── */}
+          {immuneScore && <ImmuneScoreCard score={immuneScore} c={c} router={router} />}
 
           {/* ── AI Daily Insight (FinBot) ── */}
           <TouchableOpacity
@@ -282,6 +289,24 @@ export default function DashboardScreen() {
             <WaterfallBar label="Net" amount={cashflow.net} maxAmount={cashflow.income} color={cashflow.net >= 0 ? c.income : c.expense} cur={cur} c={c} />
           </View>
 
+          {/* ── Quick Actions ── */}
+          <View style={styles.quickActionsRow}>
+            <TouchableOpacity
+              onPress={() => router.push('/graveyard')}
+              style={[styles.quickAction, { backgroundColor: c.surface, borderColor: c.border }]}
+            >
+              <Text style={{ fontSize: 22 }}>⚰️</Text>
+              <Text style={[styles.quickActionLabel, { color: c.textPrimary }]}>Subscription{'\n'}Graveyard</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => router.push('/simulator')}
+              style={[styles.quickAction, { backgroundColor: c.surface, borderColor: c.border }]}
+            >
+              <Text style={{ fontSize: 22 }}>🔭</Text>
+              <Text style={[styles.quickActionLabel, { color: c.textPrimary }]}>Future Self{'\n'}Simulator</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* ── Savings Goals ── */}
           <Text style={[styles.sectionTitle, { color: c.textPrimary }]}>Savings Goals</Text>
           {savings_goals.map((goal) => {
@@ -356,6 +381,101 @@ export default function DashboardScreen() {
 }
 
 /* ── Sub-components ── */
+
+function ImmuneScoreCard({ score, c, router }: { score: ImmuneScoreResponse; c: any; router: any }) {
+  const [expanded, setExpanded] = useState(false);
+  const { factors, tips } = score;
+  const factorList = [
+    { ...factors.emergency_fund, detail: `${factors.emergency_fund.months_covered}mo covered` },
+    { ...factors.obligation_ratio, detail: `${factors.obligation_ratio.pct}% of income` },
+    { ...factors.savings_rate, detail: `${factors.savings_rate.pct}% saved` },
+  ];
+
+  return (
+    <View style={[immuneStyles.card, { backgroundColor: c.surface, borderColor: score.color }]}>
+      <View style={immuneStyles.headerRow}>
+        <View style={immuneStyles.scoreCircle}>
+          <View style={[immuneStyles.scoreRing, { borderColor: score.color }]}>
+            <Text style={[immuneStyles.scoreNumber, { color: score.color }]}>{score.score}</Text>
+            <Text style={[immuneStyles.scoreLabel, { color: c.textMuted }]}>/ 100</Text>
+          </View>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[immuneStyles.levelBadge, { color: score.color }]}>🛡 {score.level}</Text>
+          <Text style={[immuneStyles.title, { color: c.textPrimary }]}>Immune System Score</Text>
+          <Text style={[immuneStyles.desc, { color: c.textMuted }]}>{score.description}</Text>
+        </View>
+        <TouchableOpacity onPress={() => setExpanded(!expanded)} style={{ padding: 4 }}>
+          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={c.textMuted} />
+        </TouchableOpacity>
+      </View>
+
+      {expanded && (
+        <View style={immuneStyles.body}>
+          {factorList.map((f) => {
+            const pct = f.max > 0 ? (f.score / f.max) * 100 : 0;
+            return (
+              <View key={f.label} style={immuneStyles.factorRow}>
+                <View style={immuneStyles.factorLabelRow}>
+                  <Text style={[immuneStyles.factorLabel, { color: c.textPrimary }]}>{f.label}</Text>
+                  <Text style={[immuneStyles.factorDetail, { color: c.textMuted }]}>{f.detail}</Text>
+                  <Text style={[immuneStyles.factorPts, { color: score.color }]}>{f.score}/{f.max}</Text>
+                </View>
+                <View style={[immuneStyles.barTrack, { backgroundColor: c.surfaceSecondary }]}>
+                  <View style={[immuneStyles.barFill, { width: `${pct}%`, backgroundColor: score.color }]} />
+                </View>
+              </View>
+            );
+          })}
+          {tips.length > 0 && (
+            <View style={[immuneStyles.tipsBox, { backgroundColor: c.surfaceSecondary }]}>
+              {tips.map((tip, i) => (
+                <View key={i} style={immuneStyles.tipRow}>
+                  <Text style={{ color: score.color, marginRight: 6 }}>↑</Text>
+                  <Text style={[immuneStyles.tipText, { color: c.textPrimary }]}>{tip}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+          <TouchableOpacity
+            onPress={() => router.push('/simulator')}
+            style={[immuneStyles.simBtn, { borderColor: score.color }]}
+          >
+            <Text style={[immuneStyles.simBtnText, { color: score.color }]}>See Future Self →</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const immuneStyles = StyleSheet.create({
+  card: { borderRadius: 16, borderWidth: 1.5, padding: 16, marginBottom: 16 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  scoreCircle: { alignItems: 'center', justifyContent: 'center' },
+  scoreRing: {
+    width: 72, height: 72, borderRadius: 36, borderWidth: 3,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  scoreNumber: { fontFamily: 'DMMono_500Medium', fontSize: 22, lineHeight: 26 },
+  scoreLabel: { fontFamily: 'DMMono_400Regular', fontSize: 10 },
+  levelBadge: { fontFamily: 'DMSans_600SemiBold', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
+  title: { fontFamily: 'DMSans_600SemiBold', fontSize: 15, marginBottom: 2 },
+  desc: { fontFamily: 'DMSans_400Regular', fontSize: 13, lineHeight: 18 },
+  body: { marginTop: 16 },
+  factorRow: { marginBottom: 12 },
+  factorLabelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 5 },
+  factorLabel: { fontFamily: 'DMSans_500Medium', fontSize: 13, flex: 1 },
+  factorDetail: { fontFamily: 'DMMono_400Regular', fontSize: 11, marginRight: 8 },
+  factorPts: { fontFamily: 'DMMono_500Medium', fontSize: 12 },
+  barTrack: { height: 7, borderRadius: 4, overflow: 'hidden' },
+  barFill: { height: 7, borderRadius: 4 },
+  tipsBox: { borderRadius: 10, padding: 12, marginTop: 4, marginBottom: 12 },
+  tipRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6 },
+  tipText: { fontFamily: 'DMSans_400Regular', fontSize: 13, lineHeight: 18, flex: 1 },
+  simBtn: { borderWidth: 1, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+  simBtnText: { fontFamily: 'DMSans_600SemiBold', fontSize: 14 },
+});
 
 function MetricCard({ label, value, color, c, icon }: {
   label: string; value: string; color: string; c: any; icon: string;
@@ -483,4 +603,9 @@ const styles = StyleSheet.create({
   submitBtn: { borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   submitBtnText: { fontFamily: 'DMSans_600SemiBold', fontSize: 15, color: '#fff' },
   emptyText: { fontFamily: 'DMSans_400Regular', fontSize: 14, textAlign: 'center', paddingVertical: 16 },
+
+  // Quick actions
+  quickActionsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
+  quickAction: { flex: 1, borderRadius: 14, borderWidth: 0.5, padding: 14, alignItems: 'center', gap: 8 },
+  quickActionLabel: { fontFamily: 'DMSans_600SemiBold', fontSize: 13, textAlign: 'center', lineHeight: 18 },
 });
