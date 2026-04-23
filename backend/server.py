@@ -377,6 +377,97 @@ async def reset_all_data(user: dict = Depends(get_current_user)):
 async def health():
     return {"status": "healthy"}
 
+
+# ── Financial Immune System Score ──────────────────────────────────
+
+@api_router.get("/immune-score")
+async def get_immune_score(user: dict = Depends(get_current_user)):
+    uid = user["_id"]
+    settings = await db.settings.find_one({"user_id": uid}, {"_id": 0, "user_id": 0}) or {}
+    bills = await db.bills.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
+    expenses = await db.expenses.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
+    goals = await db.savings_goals.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
+
+    salary = settings.get("salary", 0)
+    currency = settings.get("currency", "$")
+    total_bills = sum(b["amount"] for b in bills)
+    recurring_expenses = sum(e["amount"] for e in expenses if e.get("recurring", False))
+    total_obligations = total_bills + recurring_expenses
+    total_liquid = sum(g.get("saved", 0) for g in goals)
+    total_all_expenses = sum(e["amount"] for e in expenses)
+    net = salary - total_bills - total_all_expenses
+
+    months_covered = (total_liquid / total_obligations) if total_obligations > 0 else (6.0 if total_liquid > 0 else 0.0)
+    if months_covered >= 6:
+        ef_score = 35.0
+    elif months_covered >= 3:
+        ef_score = 25.0 + (months_covered - 3) / 3 * 10
+    elif months_covered >= 1:
+        ef_score = 12.0 + (months_covered - 1) / 2 * 13
+    else:
+        ef_score = months_covered * 12
+
+    obligation_pct = (total_obligations / salary * 100) if salary > 0 else 100.0
+    if obligation_pct <= 40:
+        ob_score = 35.0
+    elif obligation_pct <= 60:
+        ob_score = 25.0 - (obligation_pct - 40) / 20 * 10
+    elif obligation_pct <= 75:
+        ob_score = 15.0 - (obligation_pct - 60) / 15 * 10
+    elif obligation_pct <= 90:
+        ob_score = 5.0 - (obligation_pct - 75) / 15 * 4
+    else:
+        ob_score = 0.0
+
+    savings_rate_pct = max(net / salary * 100, 0) if salary > 0 else 0.0
+    if savings_rate_pct >= 20:
+        sv_score = 30.0
+    elif savings_rate_pct >= 15:
+        sv_score = 22.0 + (savings_rate_pct - 15) / 5 * 8
+    elif savings_rate_pct >= 10:
+        sv_score = 15.0 + (savings_rate_pct - 10) / 5 * 7
+    elif savings_rate_pct >= 5:
+        sv_score = 8.0 + (savings_rate_pct - 5) / 5 * 7
+    else:
+        sv_score = savings_rate_pct / 5 * 8
+
+    total_score = min(int(round(ef_score + ob_score + sv_score)), 100)
+
+    if total_score >= 80:
+        level, color = "Resilient", "#43a047"
+        description = "Your finances could weather a major storm."
+    elif total_score >= 60:
+        level, color = "Stable", "#1a4a8a"
+        description = "You have some buffer but vulnerabilities exist."
+    elif total_score >= 40:
+        level, color = "Vulnerable", "#b8740a"
+        description = "A financial shock could strain you significantly."
+    else:
+        level, color = "At Risk", "#c84b1f"
+        description = "Immediate attention needed — low resilience."
+
+    tips = []
+    if months_covered < 3:
+        tips.append(f"Build emergency fund to cover 3 months ({currency}{max(total_obligations*3-total_liquid,0):,.0f} more needed)")
+    if obligation_pct > 60:
+        tips.append(f"Fixed obligations are {obligation_pct:.0f}% of income — aim below 60%")
+    if savings_rate_pct < 10 and salary > 0:
+        tips.append(f"Savings rate is {savings_rate_pct:.0f}% — target at least 10–20%")
+
+    return {
+        "score": total_score,
+        "level": level,
+        "color": color,
+        "description": description,
+        "factors": {
+            "emergency_fund": {"score": int(round(ef_score)), "max": 35, "months_covered": round(months_covered, 1), "total_liquid": total_liquid, "label": "Emergency Fund"},
+            "obligation_ratio": {"score": int(round(ob_score)), "max": 35, "pct": round(obligation_pct, 1), "total_obligations": total_obligations, "label": "Fixed Obligations"},
+            "savings_rate": {"score": int(round(sv_score)), "max": 30, "pct": round(savings_rate_pct, 1), "net": net, "label": "Savings Rate"},
+        },
+        "tips": tips,
+        "currency": currency,
+    }
+
 # ── AI Advisor (LLM-powered personal finance coach) ────────────────
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
