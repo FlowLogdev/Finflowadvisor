@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColors } from '../src/theme';
-import { adminListTickets, adminReplyTicket, adminCloseTicket, AdminTicket } from '../src/featuresApi';
+import { adminListTickets, adminReplyTicket, adminCloseTicket, AdminTicket } from '../src/localFeaturesApi';
 
 const STATUS_COLORS: Record<string, string> = {
   open: '#c84b1f',
@@ -47,7 +47,7 @@ export default function AdminTicketsScreen() {
     setReplying(true);
     try {
       await adminReplyTicket(detailOpen.ticket_number, replyText.trim());
-      Alert.alert('Reply sent', `Email dispatched to ${detailOpen.email}`);
+      Alert.alert('Reply saved', `Reply stored on ticket #${detailOpen.ticket_number}`);
       setReplyText('');
       setDetailOpen(null);
       await load();

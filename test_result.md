@@ -355,3 +355,42 @@ agent_communication:
       New frontend: InsightsPanel component on Dashboard + /simulator screen + i18n strings.
       Manually verified: insights returns all fields, scenario returns goal_timeline_months
       (tested: 30k goal / 1k/mo = 30 months, low risk), AI works with new context.
+
+  - agent: "testing"
+    message: |
+      Tested new LOCAL backend endpoints (migrated from sister-project proxy) end-to-end via
+      /app/backend_test.py against https://cashflow-staging-4.preview.emergentagent.com/api.
+      26/26 test cases passed, 0 failures.
+
+      POST /api/export/file:
+        - no-auth → 401 ✓
+        - csv: returns {filename (.csv), mime: text/csv, base64_data, bills_count, expenses_count}.
+          base64 decodes to non-empty bytes (133B with seeded data). First CSV line is exactly
+          "Type,Name,Category,Amount,Date/DueDay,Recurring" ✓
+        - xlsx: returns proper filename+mime (spreadsheetml), decoded bytes start with "PK"
+          zip signature (5468B, valid xlsx) ✓
+        - bad format ("pdf") → 400 ✓
+
+      POST /api/support/ticket (public — no auth required):
+        - Returns {ticket_number: "FF-XXXXXX" (9 chars, FF- prefix + 6 hex), status:"open",
+          created_at: ISO} ✓
+        - Empty name/email/description each → 400 ✓
+
+      GET /api/admin/support/tickets:
+        - no-auth → 401 ✓
+        - regular JWT user → 403 ✓
+        - admin JWT → 200 {tickets: [...]} containing just-created ticket ✓
+        - ?status=open filter returns only open tickets ✓
+
+      POST /api/admin/support/tickets/{t}/reply:
+        - no-auth → 401, regular user → 403, admin → 200 {ok:true} ✓
+        - After reply: ticket status is "replied" and the reply object is stored under replies[] ✓
+        - empty message → 400, non-existent ticket → 404 ✓
+
+      POST /api/admin/support/tickets/{t}/close:
+        - no-auth → 401, regular user → 403, admin → 200 {ok:true} ✓
+        - After close: ticket appears in ?status=closed list ✓
+        - non-existent ticket → 404 ✓
+
+      Smoke tests (no regression): POST /api/auth/login and GET /api/dashboard both 200 for admin.
+      Fresh user registration via POST /api/auth/register also works (used for the 403 checks).

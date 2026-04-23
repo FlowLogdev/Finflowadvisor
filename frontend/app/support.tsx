@@ -8,7 +8,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColors } from '../src/theme';
 import { useAuth } from '../src/auth';
-import { submitTicket } from '../src/featuresApi';
+import { submitTicket } from '../src/localFeaturesApi';
 
 export default function SupportScreen() {
   const c = useThemeColors();
@@ -60,7 +60,7 @@ export default function SupportScreen() {
           <Text style={[styles.successTitle, { color: c.textPrimary }]}>Ticket submitted!</Text>
           <Text style={[styles.successTicket, { color: c.income }]}>#{ticketNumber}</Text>
           <Text style={[styles.successDesc, { color: c.textMuted }]}>
-            We've sent a confirmation to {email}. Our team will reply within 24 hours.
+            Save this number. Our team will reply to {email} within 24 hours.
           </Text>
           <TouchableOpacity
             style={[styles.primaryBtn, { backgroundColor: c.income }]}

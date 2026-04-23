@@ -1061,6 +1061,165 @@ async def remove_watchlist(symbol: str, user: dict = Depends(get_current_user)):
     return {"deleted": True}
 
 
+# ── Local Export (CSV / XLSX) ───────────────────────────────────────
+import io, csv, base64 as _b64
+from openpyxl import Workbook
+
+class ExportReq(BaseModel):
+    format: str  # "csv" | "xlsx"
+
+@api_router.post("/export/file")
+async def generate_export_file(data: ExportReq, user: dict = Depends(get_current_user)):
+    fmt = (data.format or "").lower()
+    if fmt not in ("csv", "xlsx"):
+        raise HTTPException(status_code=400, detail="Unsupported format")
+
+    uid = user["_id"]
+    bills = await db.bills.find({"user_id": uid}).to_list(2000)
+    expenses = await db.expenses.find({"user_id": uid}).to_list(5000)
+    settings = await db.settings.find_one({"user_id": uid}) or {}
+    currency = settings.get("currency", "$")
+
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    filename_base = f"FinFlowAdvisors_{today}"
+
+    if fmt == "csv":
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["Type", "Name", "Category", "Amount", "Date/DueDay", "Recurring"])
+        for b in bills:
+            w.writerow(["Bill", b.get("name", ""), b.get("category", ""),
+                        f"{currency}{b.get('amount', 0):.2f}",
+                        f"Day {b.get('dueDay', '')}", "Yes"])
+        for e in expenses:
+            w.writerow(["Expense", e.get("name", ""), e.get("category", ""),
+                        f"{currency}{e.get('amount', 0):.2f}",
+                        e.get("date", ""), "Yes" if e.get("isRecurring") else "No"])
+        content = buf.getvalue().encode("utf-8")
+        return {
+            "filename": f"{filename_base}.csv",
+            "mime": "text/csv",
+            "base64_data": _b64.b64encode(content).decode("ascii"),
+            "bills_count": len(bills),
+            "expenses_count": len(expenses),
+        }
+
+    # xlsx
+    wb = Workbook()
+    ws1 = wb.active
+    ws1.title = "Bills"
+    ws1.append(["Name", "Category", "Amount", "Due Day"])
+    for b in bills:
+        ws1.append([b.get("name", ""), b.get("category", ""), b.get("amount", 0), b.get("dueDay", "")])
+    ws2 = wb.create_sheet("Expenses")
+    ws2.append(["Name", "Category", "Amount", "Date", "Recurring"])
+    for e in expenses:
+        ws2.append([e.get("name", ""), e.get("category", ""), e.get("amount", 0),
+                    e.get("date", ""), "Yes" if e.get("isRecurring") else "No"])
+    xbuf = io.BytesIO()
+    wb.save(xbuf)
+    return {
+        "filename": f"{filename_base}.xlsx",
+        "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "base64_data": _b64.b64encode(xbuf.getvalue()).decode("ascii"),
+        "bills_count": len(bills),
+        "expenses_count": len(expenses),
+    }
+
+
+# ── Local Support Tickets ───────────────────────────────────────────
+
+class TicketIn(BaseModel):
+    name: str
+    email: str
+    phone: Optional[str] = ""
+    description: str
+
+class ReplyIn(BaseModel):
+    message: str
+
+def _gen_ticket_number() -> str:
+    # Short readable ticket id, e.g. FF-A1B2C3
+    return "FF-" + uuid.uuid4().hex[:6].upper()
+
+async def _require_admin(user: dict):
+    if user.get("role") != "admin" and user.get("email") != os.environ.get("ADMIN_EMAIL", "admin@finflow.com").lower():
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+@api_router.post("/support/ticket")
+async def submit_support_ticket(data: TicketIn):
+    if not data.name.strip() or not data.email.strip() or not data.description.strip():
+        raise HTTPException(status_code=400, detail="Name, email and description are required")
+    now = datetime.now(timezone.utc)
+    tnum = _gen_ticket_number()
+    # ensure uniqueness
+    while await db.support_tickets.find_one({"ticket_number": tnum}):
+        tnum = _gen_ticket_number()
+    doc = {
+        "ticket_number": tnum,
+        "name": data.name.strip(),
+        "email": data.email.strip().lower(),
+        "phone": (data.phone or "").strip(),
+        "description": data.description.strip()[:4000],
+        "status": "open",
+        "replies": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.support_tickets.insert_one(doc)
+    return {"ticket_number": tnum, "status": "open", "created_at": now.isoformat()}
+
+@api_router.get("/admin/support/tickets")
+async def admin_list_tickets(status: Optional[str] = None, user: dict = Depends(get_current_user)):
+    await _require_admin(user)
+    q: dict = {}
+    if status in ("open", "replied", "closed"):
+        q["status"] = status
+    docs = await db.support_tickets.find(q).sort("created_at", -1).to_list(500)
+    out = []
+    for d in docs:
+        out.append({
+            "id": str(d["_id"]),
+            "ticket_number": d.get("ticket_number", ""),
+            "name": d.get("name", ""),
+            "email": d.get("email", ""),
+            "phone": d.get("phone", ""),
+            "description": d.get("description", ""),
+            "status": d.get("status", "open"),
+            "created_at": (d.get("created_at") or datetime.now(timezone.utc)).isoformat(),
+            "replies": d.get("replies", []),
+        })
+    return {"tickets": out}
+
+@api_router.post("/admin/support/tickets/{ticket_number}/reply")
+async def admin_reply_ticket(ticket_number: str, data: ReplyIn, user: dict = Depends(get_current_user)):
+    await _require_admin(user)
+    msg = (data.message or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="Reply message cannot be empty")
+    doc = await db.support_tickets.find_one({"ticket_number": ticket_number})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    now = datetime.now(timezone.utc)
+    reply = {"by": "admin", "message": msg[:4000], "at": now.isoformat()}
+    await db.support_tickets.update_one(
+        {"_id": doc["_id"]},
+        {"$push": {"replies": reply}, "$set": {"status": "replied", "updated_at": now}},
+    )
+    return {"ok": True}
+
+@api_router.post("/admin/support/tickets/{ticket_number}/close")
+async def admin_close_ticket(ticket_number: str, user: dict = Depends(get_current_user)):
+    await _require_admin(user)
+    res = await db.support_tickets.update_one(
+        {"ticket_number": ticket_number},
+        {"$set": {"status": "closed", "updated_at": datetime.now(timezone.utc)}},
+    )
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return {"ok": True}
+
+
 # ── App setup ───────────────────────────────────────────────────────
 
 app.include_router(api_router)

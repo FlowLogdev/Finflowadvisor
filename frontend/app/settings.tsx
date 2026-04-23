@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator,
+  View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { useTheme, ThemeMode } from '../src/theme';
 import { useI18n, LANGUAGES, LanguageCode } from '../src/i18n';
 import { getSettings, updateSettings, resetAllData } from '../src/api';
-import { getBillingMe, cancelSubscription, emailExport, BillingMe } from '../src/featuresApi';
+import { getBillingMe, cancelSubscription, BillingMe } from '../src/featuresApi';
+import { generateExport } from '../src/localFeaturesApi';
 import { useAuth } from '../src/auth';
 import { CURRENCIES } from '../src/types';
 
@@ -55,10 +58,38 @@ export default function SettingsScreen() {
   const handleEmailExport = async (format: 'csv' | 'xlsx') => {
     setExporting(format);
     try {
-      await emailExport(format);
-      Alert.alert('Email sent 📧', `Your ${format.toUpperCase()} export is on its way to your inbox.`);
+      const file = await generateExport(format);
+      if (Platform.OS === 'web') {
+        // Web: trigger download via anchor
+        const byteChars = atob(file.base64_data);
+        const byteArr = new Uint8Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+        const blob = new Blob([byteArr], { type: file.mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file.filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        // Native: save to cache, then open share sheet
+        const path = `${FileSystem.cacheDirectory}${file.filename}`;
+        await FileSystem.writeAsStringAsync(path, file.base64_data, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const canShare = await Sharing.isAvailableAsync();
+        if (!canShare) {
+          Alert.alert('Saved', `File saved to: ${path}`);
+          return;
+        }
+        await Sharing.shareAsync(path, {
+          mimeType: file.mime,
+          dialogTitle: `Share ${format.toUpperCase()} export`,
+          UTI: format === 'csv' ? 'public.comma-separated-values-text' : 'org.openxmlformats.spreadsheetml.sheet',
+        });
+      }
     } catch (e: any) {
-      Alert.alert('Error', e?.message?.slice(0, 160) || 'Could not send export');
+      Alert.alert('Error', e?.message?.slice(0, 160) || 'Could not generate export');
     } finally {
       setExporting(null);
     }
@@ -155,8 +186,8 @@ export default function SettingsScreen() {
             disabled={exporting !== null}
           >
             <Ionicons name="document-text-outline" size={20} color={c.income} />
-            <Text style={[styles.actionText, { color: c.textPrimary }]}>Email me CSV export</Text>
-            {exporting === 'csv' ? <ActivityIndicator size="small" color={c.income} /> : <Ionicons name="mail-outline" size={16} color={c.textMuted} />}
+            <Text style={[styles.actionText, { color: c.textPrimary }]}>Export CSV (Share)</Text>
+            {exporting === 'csv' ? <ActivityIndicator size="small" color={c.income} /> : <Ionicons name="share-outline" size={16} color={c.textMuted} />}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -165,8 +196,8 @@ export default function SettingsScreen() {
             disabled={exporting !== null}
           >
             <Ionicons name="grid-outline" size={20} color={c.income} />
-            <Text style={[styles.actionText, { color: c.textPrimary }]}>Email me Excel export</Text>
-            {exporting === 'xlsx' ? <ActivityIndicator size="small" color={c.income} /> : <Ionicons name="mail-outline" size={16} color={c.textMuted} />}
+            <Text style={[styles.actionText, { color: c.textPrimary }]}>Export Excel (Share)</Text>
+            {exporting === 'xlsx' ? <ActivityIndicator size="small" color={c.income} /> : <Ionicons name="share-outline" size={16} color={c.textMuted} />}
           </TouchableOpacity>
 
           {isAdmin && (
