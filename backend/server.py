@@ -675,10 +675,9 @@ async def _build_financial_context(user_id: str) -> str:
     bill_lines = "\n".join([f"  - {b.get('name','')} ({b.get('category','')}): {currency}{b.get('amount',0):.2f} on day {b.get('dueDay','?')}" for b in bills[:10]]) or "  (none)"
     cat_lines = "\n".join([f"  - {c}: {currency}{a:.2f}" for c, a in top_cats]) or "  (none yet this month)"
 
-    # Add forecast / risk / personality from insights if available
+    # Financial health metrics
     smart_context = ""
     try:
-        # Reuse insights logic by querying fresh data — already have it above
         days_elapsed = max(now.day, 1)
         daily_burn = total_expenses / days_elapsed if days_elapsed else 0
         wants_budget = salary * (pct_wants / 100)
@@ -696,6 +695,41 @@ async def _build_financial_context(user_id: str) -> str:
     except Exception:
         pass
 
+    # Live FX rates — reuse cache if warm, otherwise fetch fresh
+    fx_context = ""
+    try:
+        import time as _time
+        rates = None
+        if _fx_cache.get("data") and (_time.time() - _fx_cache.get("ts", 0)) < _fx_cache_ttl:
+            rates = _fx_cache["data"]
+        else:
+            async with httpx.AsyncClient(timeout=6.0) as http:
+                bases: dict = {}
+                for base, quote in DEFAULT_FX_PAIRS:
+                    bases.setdefault(base, []).append(quote)
+                fresh = []
+                for base, quotes in bases.items():
+                    try:
+                        r = await http.get(f"https://api.frankfurter.dev/v1/latest?base={base}&symbols={','.join(quotes)}")
+                        if r.status_code == 200:
+                            d = r.json()
+                            for q, rate in d.get("rates", {}).items():
+                                fresh.append({"base": base, "quote": q, "rate": rate, "date": d.get("date")})
+                    except Exception:
+                        continue
+                if fresh:
+                    _fx_cache["data"] = fresh
+                    _fx_cache["ts"] = _time.time()
+                    rates = fresh
+        if rates:
+            rate_lines = "\n".join(
+                f"  {r['base']}/{r['quote']}: {r['rate']:.4f}  (as of {r.get('date','today')})"
+                for r in rates
+            )
+            fx_context = f"\n\nLIVE EXCHANGE RATES (ECB/Frankfurter data):\n{rate_lines}"
+    except Exception:
+        pass
+
     return f"""USER FINANCIAL SNAPSHOT (current month: {now.strftime('%B %Y')}):
 
 Monthly Net Salary: {currency}{salary:.2f}
@@ -709,7 +743,7 @@ THIS MONTH'S EXPENSES SO FAR (total {currency}{total_expenses:.2f}):
 Top categories:
 {cat_lines}
 
-Remaining disposable after bills: {currency}{max(salary - total_bills, 0):.2f}{smart_context}
+Remaining disposable after bills: {currency}{max(salary - total_bills, 0):.2f}{smart_context}{fx_context}
 """
 
 ADVISOR_SYSTEM_PROMPT = """You are FinBot, a friendly, concise personal-finance coach built into the FinFlow app.
@@ -725,7 +759,14 @@ GUIDELINES:
 - When giving numbers, be realistic — don't over-promise.
 - Format with short paragraphs, bullet points, or numbered steps for clarity.
 - If the user asks something unrelated to personal finance, politely redirect.
-- Never give legal, tax, or investment-advice disclaimers unless the user asks specifically about investing/taxes."""
+- Never give legal, tax, or investment-advice disclaimers unless the user asks specifically about investing/taxes.
+
+LIVE MARKET DATA:
+- You have access to live exchange rates in the context under "LIVE EXCHANGE RATES".
+- When the user asks about currency rates (e.g. "how is the dollar today?", "what is USD/BRL?", "euro rate?"), answer directly using those rates — state the exact rate and the date it was fetched.
+- Always clarify the rate is from ECB/Frankfurter data and refreshes every 15 minutes.
+- If a rate pair is not in the list, say so clearly rather than guessing.
+- You may also connect exchange rate movements to the user's personal finances when relevant (e.g. if they earn in one currency but spend in another)."""
 
 def _lang_directive(lang: Optional[str]) -> str:
     name = LANGUAGE_NAMES.get(lang or "en", "English")
