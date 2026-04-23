@@ -394,3 +394,33 @@ agent_communication:
 
       Smoke tests (no regression): POST /api/auth/login and GET /api/dashboard both 200 for admin.
       Fresh user registration via POST /api/auth/register also works (used for the 403 checks).
+
+  - agent: "testing"
+    message: |
+      Tested FinFlowAdvisors app's newly-migrated LOCAL features on Settings screen via UI testing
+      at https://cashflow-staging-4.preview.emergentagent.com in mobile viewport (390x844).
+      
+      ✅ SUCCESSFUL TESTS:
+      - Settings screen loads correctly with all sections visible
+      - "Support & Data" section present with correct labels
+      - "Export CSV (Share)" label correctly updated (old "Email me CSV export" removed)
+      - "Export Excel (Share)" label correctly updated (old "Email me Excel export" removed)
+      - CSV/Excel export functions work without error alerts or stuck spinners
+      - Contact Support navigation and form loading works
+      - Support form can be filled with test data (name, email, description)
+      - Language switching works (English/Español/Português)
+      - Theme switching works (System/Light/Dark)
+      - Currency selection works (USD/EUR/GBP/BRL/CAD)
+      - Go Premium card visible with "$9.99/mo" text
+      - All regression checks passed - no broken functionality
+      
+      ❌ ISSUES FOUND:
+      - Admin authentication issue: "Admin · Support Tickets" button not visible, suggesting
+        user not properly authenticated as admin despite using admin@finflow.com credentials
+      - Support ticket submission has timeout issues (form fills correctly but submit button
+        click times out after 30s)
+      - Unable to test admin ticket functionality, reply system, or new "Reply saved" message
+        due to authentication issues
+      
+      The core label migration from sister-project proxy to local backend is working correctly.
+      Main issue is admin authentication preventing full testing of admin-specific features.
