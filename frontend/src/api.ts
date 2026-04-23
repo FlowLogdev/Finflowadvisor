@@ -143,3 +143,24 @@ export type ScenarioResult = {
 
 export const runScenario = (data: ScenarioInput) =>
   api<ScenarioResult>('/api/scenario', { method: 'POST', body: JSON.stringify(data) });
+
+// ── Financial Immune System Score ──────────────────────────────────
+export type ImmuneFactor = {
+  score: number; max: number; label: string;
+  months_covered?: number; total_liquid?: number;
+  pct?: number; total_obligations?: number; net?: number;
+};
+export type ImmuneScore = {
+  score: number;
+  level: 'Resilient' | 'Stable' | 'Vulnerable' | 'At Risk';
+  color: string;
+  description: string;
+  factors: {
+    emergency_fund: ImmuneFactor;
+    obligation_ratio: ImmuneFactor;
+    savings_rate: ImmuneFactor;
+  };
+  tips: string[];
+  currency: string;
+};
+export const getImmuneScore = () => api<ImmuneScore>('/api/immune-score');

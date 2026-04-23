@@ -19,6 +19,7 @@ import { useAuth } from '../../src/auth';
 import { ThemeToggle } from '../../src/components/LogoHeader';
 import { MarketsCard, WatchlistCard } from '../../src/components/MarketsCards';
 import { InsightsPanel } from '../../src/components/InsightsPanel';
+import { ImmuneScoreCard } from '../../src/components/ImmuneScoreCard';
 
 const SCREEN_W = Dimensions.get('window').width;
 
@@ -169,6 +170,9 @@ export default function DashboardScreen() {
             <MetricCard label={t('dashboard.expenses')} value={`${cur}${total_expenses.toLocaleString()}`} color={c.warning} c={c} icon="card-outline" />
             <MetricCard label={t('dashboard.netLeft')} value={`${cur}${net_remaining.toLocaleString()}`} color={net_remaining >= 0 ? c.income : c.expense} c={c} icon="trending-up-outline" />
           </View>
+
+          {/* ── Financial Immune Score ── */}
+          <ImmuneScoreCard />
 
           {/* ── AI Daily Insight (FinBot) ── */}
           <TouchableOpacity
