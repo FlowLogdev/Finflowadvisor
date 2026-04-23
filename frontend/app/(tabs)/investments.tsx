@@ -53,6 +53,7 @@ export default function InvestmentsScreen() {
   const [initial, setInitial] = useState('1000');
   const [monthly, setMonthly] = useState('200');
   const [period, setPeriod] = useState<Period>(60);
+  const [goalAmount, setGoalAmount] = useState('');
   const [projection, setProjection] = useState<ProjectResponse | null>(null);
   const [projLoading, setProjLoading] = useState(false);
 
@@ -61,6 +62,27 @@ export default function InvestmentsScreen() {
   const [adviceLoading, setAdviceLoading] = useState(false);
 
   const sym = useMemo(() => (country === 'br' ? 'R$' : '$'), [country]);
+
+  const goalMilestones = useMemo(() => {
+    if (!projection || !goalAmount) return null;
+    const goal = parseFloat(goalAmount);
+    if (!goal || goal <= 0) return null;
+    const find = (series: Array<{ month: number; balance: number }>) => {
+      for (const p of series) if (p.balance >= goal) return p.month;
+      return null;
+    };
+    return country === 'br'
+      ? {
+          cdb: find(projection.br.cdb.series),
+          tesouro: find(projection.br.tesouro.series),
+          poupanca: find(projection.br.poupanca.series),
+        }
+      : {
+          hysa: find(projection.us.hysa.series),
+          ustreasury: find(projection.us.ustreasury.series),
+          savings: find(projection.us.savings.series),
+        };
+  }, [projection, goalAmount, country]);
 
   // Load all initial data
   const loadAll = useCallback(async () => {
@@ -222,6 +244,28 @@ export default function InvestmentsScreen() {
                 </View>
               </View>
             )}
+            {isBr && (
+              <View style={[styles.treasuryRow, { backgroundColor: c.surface, borderColor: c.border, marginTop: 10 }]}>
+                <Text style={[styles.treasuryLabel, { color: c.textMuted }]}>CDB benchmarks</Text>
+                <View style={styles.treasuryPills}>
+                  <TreasuryPill
+                    c={c}
+                    label="105% CDI"
+                    value={br.cdi_annual_pct != null ? +(br.cdi_annual_pct * 1.05).toFixed(2) : null}
+                  />
+                  <TreasuryPill
+                    c={c}
+                    label="110% CDI"
+                    value={br.cdi_annual_pct != null ? +(br.cdi_annual_pct * 1.10).toFixed(2) : null}
+                  />
+                  <TreasuryPill
+                    c={c}
+                    label="115% CDI"
+                    value={br.cdi_annual_pct != null ? +(br.cdi_annual_pct * 1.15).toFixed(2) : null}
+                  />
+                </View>
+              </View>
+            )}
 
             {/* ── AI Advice ── */}
             <Text style={[styles.sectionLabel, { color: c.textMuted, marginTop: 20 }]}>AI Suggestion</Text>
@@ -312,6 +356,20 @@ export default function InvestmentsScreen() {
                 ))}
               </View>
 
+              {/* Goal amount */}
+              <View style={{ marginTop: 14 }}>
+                <Text style={[styles.fieldLabel, { color: c.textMuted }]}>Goal Amount ({sym}, optional)</Text>
+                <TextInput
+                  testID="invest-goal"
+                  value={goalAmount}
+                  onChangeText={setGoalAmount}
+                  keyboardType="numeric"
+                  placeholder="e.g. 50000"
+                  placeholderTextColor={c.textMuted}
+                  style={[styles.input, { color: c.textPrimary, backgroundColor: c.surfaceSecondary, borderColor: c.border }]}
+                />
+              </View>
+
               {/* Chart */}
               {projLoading ? (
                 <View style={{ marginTop: 16, paddingVertical: 30, alignItems: 'center' }}>
@@ -343,6 +401,26 @@ export default function InvestmentsScreen() {
                     <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
                       Chart shows 3 strategies · tap refresh to update live rates
                     </Text>
+                    {goalMilestones && (
+                      <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 0.5, borderTopColor: c.border }}>
+                        <Text style={[styles.fieldLabel, { color: c.textMuted, marginBottom: 10 }]}>
+                          Time to reach {sym}{parseFloat(goalAmount).toLocaleString()}
+                        </Text>
+                        {isBr ? (
+                          <>
+                            <GoalRow c={c} label="CDB" color={c.income} months={(goalMilestones as any).cdb} period={period} />
+                            <GoalRow c={c} label="Tesouro Selic" color={c.savings} months={(goalMilestones as any).tesouro} period={period} />
+                            <GoalRow c={c} label="Poupança" color={c.warning} months={(goalMilestones as any).poupanca} period={period} />
+                          </>
+                        ) : (
+                          <>
+                            <GoalRow c={c} label="HYSA" color={c.income} months={(goalMilestones as any).hysa} period={period} />
+                            <GoalRow c={c} label="10Y Treasury" color={c.savings} months={(goalMilestones as any).ustreasury} period={period} />
+                            <GoalRow c={c} label="Savings Acct" color={c.warning} months={(goalMilestones as any).savings} period={period} />
+                          </>
+                        )}
+                      </View>
+                    )}
                   </View>
                 </>
               ) : (
@@ -431,6 +509,34 @@ function SummaryRow({ c, label, value, tone }: any) {
     <View style={styles.summaryRow}>
       <Text style={[styles.summaryLabel, { color: c.textMuted }]}>{label}</Text>
       <Text style={[styles.summaryValue, { color }]}>{value}</Text>
+    </View>
+  );
+}
+
+function GoalRow({ c, label, color, months, period }: {
+  c: any; label: string; color: string; months: number | null; period: number;
+}) {
+  const reachable = months !== null;
+  let text: string;
+  if (!reachable) {
+    const yrs = period >= 12 ? `${Math.floor(period / 12)}y` : `${period}m`;
+    text = `Beyond ${yrs}`;
+  } else if (months >= 12) {
+    const y = Math.floor(months / 12);
+    const m = months % 12;
+    text = m > 0 ? `${y}y ${m}m` : `${y}y`;
+  } else {
+    text = `${months} months`;
+  }
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color }} />
+        <Text style={{ color: c.textPrimary, fontFamily: 'DMSans_500Medium', fontSize: 13 }}>{label}</Text>
+      </View>
+      <Text style={{ color: reachable ? color : c.textMuted, fontFamily: 'DMMono_500Medium', fontSize: 13 }}>
+        {text}
+      </Text>
     </View>
   );
 }
