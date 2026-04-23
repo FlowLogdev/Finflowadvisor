@@ -174,6 +174,37 @@ export default function DashboardScreen() {
           {/* ── Financial Immune Score ── */}
           <ImmuneScoreCard />
 
+          {/* ── Quick Tools Row ── */}
+          <View style={styles.quickToolsRow}>
+            <TouchableOpacity
+              style={[styles.quickTool, { backgroundColor: c.surface, borderColor: c.border }]}
+              onPress={() => router.push('/future-self' as any)}
+              testID="quick-future-self"
+            >
+              <Text style={styles.quickToolEmoji}>🔮</Text>
+              <Text style={[styles.quickToolLabel, { color: c.textPrimary }]}>Future You</Text>
+              <Text style={[styles.quickToolHint, { color: c.textMuted }]}>30yr projection</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.quickTool, { backgroundColor: c.surface, borderColor: c.border }]}
+              onPress={() => router.push('/subscription-graveyard' as any)}
+              testID="quick-graveyard"
+            >
+              <Text style={styles.quickToolEmoji}>🪦</Text>
+              <Text style={[styles.quickToolLabel, { color: c.textPrimary }]}>Graveyard</Text>
+              <Text style={[styles.quickToolHint, { color: c.textMuted }]}>Kill unused subs</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.quickTool, { backgroundColor: c.surface, borderColor: c.border }]}
+              onPress={() => router.push('/simulator' as any)}
+              testID="quick-simulator"
+            >
+              <Text style={styles.quickToolEmoji}>🎲</Text>
+              <Text style={[styles.quickToolLabel, { color: c.textPrimary }]}>What-If</Text>
+              <Text style={[styles.quickToolHint, { color: c.textMuted }]}>Run scenario</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* ── AI Daily Insight (FinBot) ── */}
           <TouchableOpacity
             activeOpacity={0.85}
@@ -429,6 +460,16 @@ const styles = StyleSheet.create({
 
   // Metrics
   metricsRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
+
+  // Quick tools row
+  quickToolsRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  quickTool: {
+    flex: 1, borderRadius: 12, borderWidth: 0.5,
+    paddingVertical: 14, paddingHorizontal: 8, alignItems: 'center',
+  },
+  quickToolEmoji: { fontSize: 24, marginBottom: 6 },
+  quickToolLabel: { fontFamily: 'DMSans_700Bold', fontSize: 13 },
+  quickToolHint: { fontFamily: 'DMSans_400Regular', fontSize: 10, marginTop: 2, textAlign: 'center' },
   metricCard: { flex: 1, borderRadius: 12, borderWidth: 0.5, padding: 16 },
   metricLabel: { fontFamily: 'DMSans_400Regular', fontSize: 13, marginLeft: 6 },
   metricValue: { fontFamily: 'DMMono_500Medium', fontSize: 20 },
