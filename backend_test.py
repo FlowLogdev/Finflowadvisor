@@ -1,336 +1,252 @@
 """
-Backend tests for new endpoints:
-- GET  /api/immune-score
-- GET  /api/subscription-graveyard
-- PATCH /api/subscription-graveyard/{id}/toggle-unused
-- POST /api/future-self
-- POST /api/ai-advisor/chat (live FX context)
-- Regression: /api/auth/login, /api/dashboard, /api/insights,
-  /api/investments/rates, /api/markets/fx
+Backend Tests for DELETE /api/auth/account (Apple App Store compliance, Guideline 5.1.1)
++ regression smoke for admin-only auth endpoints.
+
+Runs against the public preview URL, which routes /api to the FastAPI backend.
 """
+
 import os
 import sys
+import uuid
 import json
-import re
-import time
 import requests
-from pathlib import Path
 
-# Load backend URL from frontend .env (public URL is EXPO_PUBLIC_BACKEND_URL)
-FRONTEND_ENV = Path("/app/frontend/.env")
-BASE = None
-for line in FRONTEND_ENV.read_text().splitlines():
-    if line.startswith("EXPO_PUBLIC_BACKEND_URL="):
-        BASE = line.split("=", 1)[1].strip().strip('"')
-        break
-assert BASE, "Could not find EXPO_PUBLIC_BACKEND_URL"
-API = BASE.rstrip("/") + "/api"
-print(f"[CONFIG] API base: {API}")
+BASE_URL = "https://cashflow-staging-4.preview.emergentagent.com/api"
+ADMIN_EMAIL = "support@finflowadvisors.com"
+ADMIN_PASSWORD = "Fabio@123"
 
-ADMIN_EMAIL = "admin@finflow.com"
-ADMIN_PASSWORD = "eWcukKTEp0WMtHyaoT8ovZt0"
+results = []  # list of (name, passed, detail)
 
-results = []
-
-def record(name: str, ok: bool, detail: str = ""):
-    tag = "PASS" if ok else "FAIL"
-    print(f"[{tag}] {name}" + (f"  ::  {detail}" if detail else ""))
-    results.append((name, ok, detail))
+def record(name: str, passed: bool, detail: str = ""):
+    icon = "PASS" if passed else "FAIL"
+    print(f"[{icon}] {name}  {detail}")
+    results.append((name, passed, detail))
 
 
-def auth_headers(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+def hjson(r):
+    try:
+        return r.json()
+    except Exception:
+        return {"_raw": r.text[:300]}
 
 
-# ── Login first ───────────────────────────────────────────────────
-print("\n=== Auth ===")
-r = requests.post(f"{API}/auth/login",
-                  json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-                  timeout=30)
-record("POST /auth/login admin", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
-assert r.status_code == 200, "Cannot proceed without JWT"
-TOKEN = r.json().get("token") or r.json().get("access_token")
-assert TOKEN, f"No token in login response: {r.json()}"
-H = auth_headers(TOKEN)
-print(f"[INFO] JWT acquired (len={len(TOKEN)})")
+def main():
+    # ── 1. UNAUTHENTICATED DELETE → 401 ────────────────────────────────
+    r = requests.delete(f"{BASE_URL}/auth/account", timeout=15)
+    record(
+        "1. Unauthenticated DELETE /api/auth/account → 401",
+        r.status_code == 401,
+        f"got status={r.status_code} body={hjson(r)}",
+    )
 
+    # ── 2. FULL FLOW: register → seed data → delete ───────────────────
+    new_email = f"delete-test-{uuid.uuid4().hex[:8]}@example.com"
+    new_pw = "P@ssw0rd-DeleteTest!23"
+    new_name = "Fabio Delete Test"
 
-# ────────────────────────────────────────────────────────────────
-# 1) /api/immune-score
-# ────────────────────────────────────────────────────────────────
-print("\n=== /api/immune-score ===")
-r = requests.get(f"{API}/immune-score", timeout=30)
-record("immune-score no token → 401", r.status_code == 401, f"got {r.status_code}")
+    r = requests.post(
+        f"{BASE_URL}/auth/register",
+        json={"name": new_name, "email": new_email, "password": new_pw},
+        timeout=15,
+    )
+    if r.status_code != 200 or "access_token" not in (r.json() or {}):
+        record("2a. POST /auth/register fresh user", False, f"status={r.status_code} body={hjson(r)}")
+        print("Cannot continue, registration failed.")
+        return summarize()
+    body = r.json()
+    token = body["access_token"]
+    user_id = body["user"]["id"]
+    record(
+        "2a. POST /auth/register fresh user",
+        True,
+        f"status=200 user_id={user_id} email={new_email}",
+    )
+    H = {"Authorization": f"Bearer {token}"}
 
-r = requests.get(f"{API}/immune-score", headers=H, timeout=30)
-record("immune-score auth → 200", r.status_code == 200, f"status={r.status_code}")
-if r.status_code == 200:
-    j = r.json()
-    needed_keys = {"score", "level", "color", "description", "factors", "tips", "currency"}
-    record("immune-score has top-level keys",
-           needed_keys.issubset(set(j.keys())),
-           f"keys={sorted(j.keys())}")
-    score = j.get("score", -1)
-    record("immune-score score 0..100",
-           isinstance(score, int) and 0 <= score <= 100,
-           f"score={score}")
-    level = j.get("level")
-    record("immune-score level valid",
-           level in ("Resilient", "Stable", "Vulnerable", "At Risk"),
-           f"level={level}")
-    color = j.get("color", "")
-    record("immune-score color is hex",
-           isinstance(color, str) and re.match(r"^#[0-9a-fA-F]{6}$", color) is not None,
-           f"color={color}")
-    factors = j.get("factors", {})
-    fok = True
-    sub_scores = []
-    for key, maxv in [("emergency_fund", 35), ("obligation_ratio", 35), ("savings_rate", 30)]:
-        f = factors.get(key, {})
-        if not isinstance(f, dict):
-            fok = False
-            break
-        if not all(k in f for k in ("score", "max", "label")):
-            fok = False
-            break
-        if f.get("max") != maxv:
-            fok = False
-            break
-        sub_scores.append(f.get("score"))
-    record("immune-score factors shape",
-           fok,
-           f"factors={factors}")
-    if fok:
-        s_sum = sum(sub_scores)
-        diff = abs(s_sum - min(score, 100))
-        record("immune-score factor scores sum ~= total (±2 tolerance or capped at 100)",
-               diff <= 2 or (s_sum >= 100 and score == 100),
-               f"sum={s_sum} total={score} diff={diff}")
-    tips = j.get("tips", None)
-    record("immune-score tips is list", isinstance(tips, list), f"tips_type={type(tips).__name__}")
-    print(f"[DATA] immune-score = {json.dumps(j, indent=2)[:800]}")
+    # ── 2b. Seed: bill, expense, settings update with salary ──────────
+    bill_resp = requests.post(
+        f"{BASE_URL}/bills",
+        json={"name": "Apartment Rent", "category": "Housing", "amount": 1450.00, "dueDay": 5},
+        headers=H, timeout=15,
+    )
+    record(
+        "2b. POST /bills (Housing rent $1450)",
+        bill_resp.status_code == 200,
+        f"status={bill_resp.status_code} resp={hjson(bill_resp)}",
+    )
 
+    exp_resp = requests.post(
+        f"{BASE_URL}/expenses",
+        json={"name": "Whole Foods grocery run", "category": "Groceries", "amount": 87.43},
+        headers=H, timeout=15,
+    )
+    record(
+        "2b. POST /expenses (Groceries $87.43)",
+        exp_resp.status_code == 200,
+        f"status={exp_resp.status_code} resp={hjson(exp_resp)}",
+    )
 
-# ────────────────────────────────────────────────────────────────
-# 2) /api/subscription-graveyard (auth + shape)
-# ────────────────────────────────────────────────────────────────
-print("\n=== /api/subscription-graveyard ===")
-r = requests.get(f"{API}/subscription-graveyard", timeout=30)
-record("graveyard no token → 401", r.status_code == 401, f"got {r.status_code}")
+    set_resp = requests.put(
+        f"{BASE_URL}/settings",
+        json={"salary": 7500, "currency": "$", "pctNeeds": 50, "pctWants": 30, "pctSavings": 20},
+        headers=H, timeout=15,
+    )
+    record(
+        "2b. PUT /settings (salary $7500)",
+        set_resp.status_code == 200 and set_resp.json().get("salary") == 7500,
+        f"status={set_resp.status_code} resp={hjson(set_resp)}",
+    )
 
-r = requests.get(f"{API}/subscription-graveyard", headers=H, timeout=30)
-record("graveyard auth → 200", r.status_code == 200, f"status={r.status_code}")
-graveyard0 = r.json() if r.status_code == 200 else {}
-baseline_total_monthly = 0
-baseline_waste_monthly = 0
-if graveyard0:
-    required = {"subscriptions", "total_monthly", "total_annual",
-                "total_waste_monthly", "total_waste_annual", "currency", "months_active"}
-    record("graveyard top-level keys present",
-           required.issubset(graveyard0.keys()),
-           f"keys={sorted(graveyard0.keys())}")
-    baseline_total_monthly = graveyard0.get("total_monthly", 0)
-    baseline_waste_monthly = graveyard0.get("total_waste_monthly", 0)
-    print(f"[DATA] baseline months_active={graveyard0.get('months_active')}, total_monthly={baseline_total_monthly}, total_waste={baseline_waste_monthly}")
+    # ── 6 (pre-step): /dashboard should show seeded data ──────────────
+    dash_resp = requests.get(f"{BASE_URL}/dashboard", headers=H, timeout=15)
+    pre_pass = False
+    pre_detail = ""
+    if dash_resp.status_code == 200:
+        d = dash_resp.json()
+        pre_detail = (
+            f"total_bills={d.get('total_bills')} total_expenses={d.get('total_expenses')} "
+            f"settings.salary={d.get('settings',{}).get('salary')}"
+        )
+        pre_pass = (
+            float(d.get("total_bills", 0)) == 1450.00
+            and float(d.get("total_expenses", 0)) == 87.43
+            and float(d.get("settings", {}).get("salary", 0)) == 7500
+        )
+    record(
+        "6a. GET /dashboard before delete shows seeded data",
+        pre_pass,
+        f"status={dash_resp.status_code} {pre_detail}",
+    )
 
+    # ── 2c. DELETE /auth/account ──────────────────────────────────────
+    del_resp = requests.delete(f"{BASE_URL}/auth/account", headers=H, timeout=15)
+    record(
+        "2c. DELETE /auth/account → 200 {deleted: true}",
+        del_resp.status_code == 200 and (del_resp.json() or {}).get("deleted") is True,
+        f"status={del_resp.status_code} body={hjson(del_resp)}",
+    )
 
-# 2b) POST a Subscriptions bill and verify it appears + cumulative math
-print("\n=== Create Subscriptions bill and verify graveyard ===")
-BILL_NAME = f"Netflix-Test-{int(time.time())}"
-bill_payload = {"name": BILL_NAME, "category": "Subscriptions", "amount": 15.99, "dueDay": 5}
-r = requests.post(f"{API}/bills", headers=H, json=bill_payload, timeout=30)
-record("POST /bills (Subscriptions)", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
-created_bill_id = r.json().get("id") if r.status_code == 200 else None
-print(f"[DATA] new bill id={created_bill_id}")
+    # ── 3. After deletion, GET /auth/me with old token → 401 ──────────
+    me_resp = requests.get(f"{BASE_URL}/auth/me", headers=H, timeout=15)
+    record(
+        "3. GET /auth/me after delete with old token → 401",
+        me_resp.status_code == 401,
+        f"status={me_resp.status_code} body={hjson(me_resp)}",
+    )
 
-if created_bill_id:
-    r = requests.get(f"{API}/subscription-graveyard", headers=H, timeout=30)
-    graveyard1 = r.json() if r.status_code == 200 else {}
-    subs = graveyard1.get("subscriptions", [])
-    hit = next((s for s in subs if s.get("id") == created_bill_id), None)
-    record("created sub appears in graveyard",
-           hit is not None,
-           f"found={hit is not None}; total_subs={len(subs)}")
-    if hit:
-        record("created sub has required fields",
-               all(k in hit for k in ("id", "name", "monthly_cost", "cumulative_cost",
-                                      "months_active", "marked_unused", "type",
-                                      "category", "is_buried")),
-               f"keys={sorted(hit.keys())}")
-        record("created sub monthly_cost == 15.99",
-               abs(hit.get("monthly_cost", 0) - 15.99) < 0.001,
-               f"monthly={hit.get('monthly_cost')}")
-        record("created sub type == 'bill'",
-               hit.get("type") == "bill",
-               f"type={hit.get('type')}")
-        record("created sub category == 'Subscriptions'",
-               hit.get("category") == "Subscriptions",
-               f"category={hit.get('category')}")
-        record("created sub is_buried False initially",
-               hit.get("is_buried") is False,
-               f"is_buried={hit.get('is_buried')}")
-        expected_cum = round(hit.get("monthly_cost", 0) * hit.get("months_active", 0), 2)
-        record("cumulative_cost == monthly * months_active",
-               abs(hit.get("cumulative_cost", 0) - expected_cum) < 0.01,
-               f"cumulative={hit.get('cumulative_cost')} expected={expected_cum} months={hit.get('months_active')}")
+    # ── 4. After deletion, login should fail → 401 ────────────────────
+    login_resp = requests.post(
+        f"{BASE_URL}/auth/login",
+        json={"email": new_email, "password": new_pw},
+        timeout=15,
+    )
+    record(
+        "4. POST /auth/login after delete → 401",
+        login_resp.status_code == 401,
+        f"status={login_resp.status_code} body={hjson(login_resp)}",
+    )
 
+    # ── 5. Re-register SAME email succeeds ────────────────────────────
+    re_resp = requests.post(
+        f"{BASE_URL}/auth/register",
+        json={"name": new_name, "email": new_email, "password": new_pw},
+        timeout=15,
+    )
+    re_pass = re_resp.status_code == 200 and "access_token" in (re_resp.json() or {})
+    new_token = re_resp.json().get("access_token") if re_pass else None
+    new_user_id = re_resp.json().get("user", {}).get("id") if re_pass else None
+    record(
+        "5. POST /auth/register SAME email after delete → 200 with new token",
+        re_pass and new_user_id != user_id,
+        f"status={re_resp.status_code} new_user_id={new_user_id} (old was {user_id}) "
+        f"different={new_user_id != user_id}",
+    )
 
-# ────────────────────────────────────────────────────────────────
-# 3) PATCH /api/subscription-graveyard/{id}/toggle-unused
-# ────────────────────────────────────────────────────────────────
-print("\n=== PATCH /subscription-graveyard/{id}/toggle-unused ===")
-r = requests.patch(f"{API}/subscription-graveyard/{created_bill_id}/toggle-unused", timeout=30)
-record("toggle no token → 401", r.status_code == 401, f"got {r.status_code}")
+    if not new_token:
+        print("Cannot continue, re-registration failed.")
+        return summarize_and_cleanup()
 
-r = requests.patch(f"{API}/subscription-graveyard/does-not-exist-uuid/toggle-unused",
-                   headers=H, timeout=30)
-record("toggle bad id → 404", r.status_code == 404, f"got {r.status_code} body={r.text[:200]}")
+    H2 = {"Authorization": f"Bearer {new_token}"}
 
-r = requests.patch(f"{API}/subscription-graveyard/{created_bill_id}/toggle-unused",
-                   headers=H, timeout=30)
-record("toggle #1 → 200", r.status_code == 200, f"status={r.status_code}")
-mu1 = r.json().get("marked_unused") if r.status_code == 200 else None
-record("toggle #1 marked_unused True", mu1 is True, f"marked_unused={mu1}")
+    # ── 6 (post). /dashboard with NEW token shows ZERO bills/expenses ─
+    dash2 = requests.get(f"{BASE_URL}/dashboard", headers=H2, timeout=15)
+    post_pass = False
+    post_detail = ""
+    if dash2.status_code == 200:
+        d = dash2.json()
+        post_detail = (
+            f"total_bills={d.get('total_bills')} total_expenses={d.get('total_expenses')} "
+            f"bills_by_category={d.get('bills_by_category')} "
+            f"expenses_by_category={d.get('expenses_by_category')} "
+            f"settings.salary={d.get('settings',{}).get('salary')}"
+        )
+        post_pass = (
+            float(d.get("total_bills", -1)) == 0
+            and float(d.get("total_expenses", -1)) == 0
+            and len(d.get("bills_by_category", []) or []) == 0
+            and len(d.get("expenses_by_category", []) or []) == 0
+        )
+    record(
+        "6b. GET /dashboard with NEW token shows ZERO bills+expenses (data wiped)",
+        post_pass,
+        f"status={dash2.status_code} {post_detail}",
+    )
 
-r = requests.get(f"{API}/subscription-graveyard", headers=H, timeout=30)
-gv2 = r.json() if r.status_code == 200 else {}
-hit2 = next((s for s in gv2.get("subscriptions", []) if s.get("id") == created_bill_id), None)
-record("after toggle: is_buried True",
-       hit2 is not None and hit2.get("is_buried") is True,
-       f"is_buried={hit2.get('is_buried') if hit2 else None}")
-record("after toggle: total_waste_monthly reflects +15.99",
-       abs(gv2.get("total_waste_monthly", 0) - (baseline_waste_monthly + 15.99)) < 0.01,
-       f"waste_now={gv2.get('total_waste_monthly')} baseline={baseline_waste_monthly}")
+    # cleanup: delete reborn account so we don't leave junk users
+    requests.delete(f"{BASE_URL}/auth/account", headers=H2, timeout=15)
 
-r = requests.patch(f"{API}/subscription-graveyard/{created_bill_id}/toggle-unused",
-                   headers=H, timeout=30)
-mu2 = r.json().get("marked_unused") if r.status_code == 200 else None
-record("toggle #2 marked_unused False", mu2 is False, f"marked_unused={mu2}")
+    # ── 7. Regression smoke: admin still works for key endpoints ──────
+    al = requests.post(
+        f"{BASE_URL}/auth/login",
+        json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        timeout=15,
+    )
+    admin_pass = al.status_code == 200 and "access_token" in (al.json() or {})
+    record(
+        "7a. Admin POST /auth/login (support@finflowadvisors.com / Fabio@123)",
+        admin_pass,
+        f"status={al.status_code} role={al.json().get('user',{}).get('role') if admin_pass else 'n/a'}",
+    )
+    if not admin_pass:
+        return summarize()
+    AH = {"Authorization": f"Bearer {al.json()['access_token']}"}
 
-
-# Cleanup
-r = requests.delete(f"{API}/bills/{created_bill_id}", headers=H, timeout=30)
-print(f"[CLEANUP] delete bill status={r.status_code}")
-
-
-# ────────────────────────────────────────────────────────────────
-# 4) POST /api/future-self
-# ────────────────────────────────────────────────────────────────
-print("\n=== POST /api/future-self ===")
-r = requests.post(f"{API}/future-self", timeout=30)
-record("future-self no token → 401", r.status_code == 401, f"got {r.status_code}")
-
-r = requests.post(f"{API}/future-self", headers=H, timeout=30)
-record("future-self auth → 200", r.status_code == 200, f"status={r.status_code}")
-if r.status_code == 200:
-    j = r.json()
-    needed = {"currency", "current", "optimized", "assumptions"}
-    record("future-self top-level keys",
-           needed.issubset(j.keys()),
-           f"keys={sorted(j.keys())}")
-    assumptions = j.get("assumptions", {})
-    arp = assumptions.get("annual_return_pct")
-    record("assumptions.annual_return_pct == 7.0 (exact)",
-           arp == 7.0,
-           f"annual_return_pct={arp} type={type(arp).__name__}")
-    record("assumptions.starting_balance present",
-           "starting_balance" in assumptions,
-           f"starting={assumptions.get('starting_balance')}")
-    record("assumptions.optimization_source present",
-           "optimization_source" in assumptions,
-           f"src={assumptions.get('optimization_source')}")
-
-    cur = j.get("current", {})
-    opt = j.get("optimized", {})
-    record("current has required keys",
-           all(k in cur for k in ("monthly_savings", "monthly_spend", "projections")),
-           f"keys={sorted(cur.keys())}")
-    record("optimized has required keys",
-           all(k in opt for k in ("monthly_savings", "monthly_spend", "monthly_freed", "projections")),
-           f"keys={sorted(opt.keys())}")
-    projs = cur.get("projections", [])
-    record("current.projections has 4 entries",
-           isinstance(projs, list) and len(projs) == 4,
-           f"len={len(projs)}")
-    if len(projs) == 4:
-        years = [p.get("years") for p in projs]
-        record("projections years == [5,10,20,30]",
-               years == [5, 10, 20, 30],
-               f"years={years}")
-        balances = [p.get("balance") for p in projs]
-        record("current projections strictly increase",
-               all(balances[i] < balances[i+1] for i in range(3)),
-               f"balances={balances}")
-        ms = cur.get("monthly_savings", 0)
-        print(f"[DATA] current.monthly_savings={ms}  current balances={balances}")
-        if ms >= 4000:
-            record("30yr balance substantial (>=$5M) at high monthly_savings (>=$4000/mo)",
-                   balances[3] >= 5_000_000,
-                   f"30yr={balances[3]} monthly_savings={ms}")
+    for label, path, method in [
+        ("7b. GET /immune-score", "/immune-score", "GET"),
+        ("7c. GET /subscription-graveyard", "/subscription-graveyard", "GET"),
+        ("7d. POST /future-self", "/future-self", "POST"),
+        ("7e. GET /investments/rates", "/investments/rates", "GET"),
+    ]:
+        if method == "GET":
+            rr = requests.get(f"{BASE_URL}{path}", headers=AH, timeout=20)
         else:
-            print(f"[INFO] Skipping $5M+ check: monthly_savings={ms} < $4000 — not applicable to this user.")
+            rr = requests.post(f"{BASE_URL}{path}", headers=AH, json={}, timeout=30)
+        ok = rr.status_code == 200
+        body = hjson(rr)
+        snippet = ""
+        if isinstance(body, dict):
+            snippet = ", ".join(f"{k}={('...' if isinstance(v,(dict,list)) else v)}" for k, v in list(body.items())[:4])
+        record(label, ok, f"status={rr.status_code} {snippet}")
 
-    opt_projs = opt.get("projections", [])
-    record("optimized.projections has 4 entries",
-           isinstance(opt_projs, list) and len(opt_projs) == 4,
-           f"len={len(opt_projs)}")
-    if len(opt_projs) == 4:
-        opt_balances = [p.get("balance") for p in opt_projs]
-        record("optimized projections strictly increase",
-               all(opt_balances[i] < opt_balances[i+1] for i in range(3)),
-               f"balances={opt_balances}")
+    return summarize()
 
 
-# ────────────────────────────────────────────────────────────────
-# 5) AI Advisor FX context
-# ────────────────────────────────────────────────────────────────
-print("\n=== AI Advisor FX context ===")
-payload = {"message": "how is USD to BRL today?", "language": "en"}
-r = requests.post(f"{API}/ai-advisor/chat", headers=H, json=payload, timeout=120)
-record("ai-advisor chat FX → 200", r.status_code == 200, f"status={r.status_code} body={r.text[:300]}")
-if r.status_code == 200:
-    reply = r.json().get("reply", "")
-    print(f"[DATA] AI reply ({len(reply)} chars):\n{reply[:1000]}\n")
-    numeric_matches = re.findall(r"\d+\.\d+", reply)
-    record("AI reply mentions a numeric rate",
-           len(numeric_matches) > 0,
-           f"numbers_found={numeric_matches[:5]}")
-    mentions_ecb = ("ECB" in reply or "Frankfurter" in reply or "frankfurter" in reply.lower())
-    record("AI reply mentions ECB or Frankfurter",
-           mentions_ecb,
-           f"ECB_present={'ECB' in reply}  frankfurter_present={'frankfurter' in reply.lower()}")
-    has_date = bool(re.search(r"\b\d{4}-\d{2}-\d{2}\b", reply)) or bool(
-        re.search(r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\b", reply, re.I)
-    ) or bool(re.search(r"\b(today|yesterday|as of)\b", reply, re.I))
-    record("AI reply mentions a date or 'as of/today'",
-           has_date,
-           f"has_date={has_date}")
+def summarize():
+    total = len(results)
+    passed = sum(1 for _, p, _ in results if p)
+    print()
+    print("=" * 70)
+    print(f"RESULTS: {passed}/{total} passed")
+    print("=" * 70)
+    for name, p, detail in results:
+        if not p:
+            print(f"  FAIL: {name} | {detail}")
+    return 0 if passed == total else 1
 
 
-# ────────────────────────────────────────────────────────────────
-# 6) Regression smoke
-# ────────────────────────────────────────────────────────────────
-print("\n=== Regression smoke ===")
-for path in ["/dashboard", "/insights", "/investments/rates", "/markets/fx"]:
-    r = requests.get(f"{API}{path}", headers=H, timeout=60)
-    record(f"GET {path} → 200", r.status_code == 200, f"status={r.status_code}")
-
-r = requests.post(f"{API}/auth/login",
-                  json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-                  timeout=30)
-record("POST /auth/login regression", r.status_code == 200, f"status={r.status_code}")
+def summarize_and_cleanup():
+    return summarize()
 
 
-# ────────────────────────────────────────────────────────────────
-# Summary
-# ────────────────────────────────────────────────────────────────
-print("\n" + "=" * 60)
-passed = sum(1 for _, ok, _ in results if ok)
-failed = sum(1 for _, ok, _ in results if not ok)
-print(f"TOTAL: {passed} PASS, {failed} FAIL out of {len(results)}")
-if failed:
-    print("\nFAILURES:")
-    for name, ok, detail in results:
-        if not ok:
-            print(f"  - {name}: {detail}")
-sys.exit(0 if failed == 0 else 1)
+if __name__ == "__main__":
+    sys.exit(main())
