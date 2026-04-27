@@ -104,6 +104,28 @@ async def login(data: LoginInput):
 async def get_me(user: dict = Depends(get_current_user)):
     return {"id": user["_id"], "name": user["name"], "email": user["email"], "role": user.get("role", "user")}
 
+
+@api_router.delete("/auth/account")
+async def delete_account(user: dict = Depends(get_current_user)):
+    """Permanently deletes the authenticated user's account and all associated data.
+    Required for Apple App Store guideline 5.1.1(v)."""
+    uid = user["_id"]
+    # Delete all user-owned data
+    await db.bills.delete_many({"user_id": uid})
+    await db.expenses.delete_many({"user_id": uid})
+    await db.savings_goals.delete_many({"user_id": uid})
+    await db.settings.delete_many({"user_id": uid})
+    await db.ai_messages.delete_many({"user_id": uid})
+    await db.ai_insights.delete_many({"user_id": uid})
+    await db.watchlist.delete_many({"user_id": uid})
+    await db.support_tickets.delete_many({"email": user.get("email", "").lower()})
+    # Delete the user record last
+    try:
+        await db.users.delete_one({"_id": ObjectId(uid)})
+    except Exception:
+        pass
+    return {"deleted": True}
+
 @api_router.post("/auth/refresh")
 async def refresh_token(request: Request):
     token = request.cookies.get("refresh_token")

@@ -45,6 +45,7 @@ export const getMonthlyHistory = () => api('/api/monthly-history');
 export const getMonthlyDetail = (month: string) => api(`/api/monthly-detail/${month}`);
 export const processRecurring = () => api('/api/process-recurring', { method: 'POST' });
 export const resetAllData = () => api('/api/reset', { method: 'POST' });
+export const deleteAccount = () => api<{ deleted: boolean }>('/api/auth/account', { method: 'DELETE' });
 // ── AI Advisor ──────────────────────────────────────────────
 export const aiAdvisorChat = (message: string, session_id?: string, language?: string) =>
   api<{ session_id: string; reply: string }>('/api/ai-advisor/chat', {

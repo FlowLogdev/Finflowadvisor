@@ -333,17 +333,33 @@ export default function PremiumScreen() {
           </TouchableOpacity>
           <Text style={[styles.legalSep, { color: c.textMuted }]}>·</Text>
           <TouchableOpacity onPress={() => openURL('https://finflowadvisors.com/terms')}>
-            <Text style={[styles.legalLink, { color: c.income }]}>Terms</Text>
+            <Text style={[styles.legalLink, { color: c.income }]}>Terms of Use (EULA)</Text>
           </TouchableOpacity>
           <Text style={[styles.legalSep, { color: c.textMuted }]}>·</Text>
           <TouchableOpacity onPress={() => openURL('https://finflowadvisors.com/privacy')}>
-            <Text style={[styles.legalLink, { color: c.income }]}>Privacy</Text>
+            <Text style={[styles.legalLink, { color: c.income }]}>Privacy Policy</Text>
           </TouchableOpacity>
+        </View>
+
+        {/* Required subscription disclaimer (Apple Guideline 3.1.2) */}
+        <View style={[styles.disclaimerBox, { backgroundColor: c.surfaceSecondary, borderColor: c.border }]}>
+          <Text style={[styles.disclaimerTitle, { color: c.textPrimary }]}>
+            FinFlow Premium · Auto-Renewable Subscription
+          </Text>
+          <Text style={[styles.disclaimerText, { color: c.textMuted }]}>
+            • <Text style={{ fontFamily: 'DMSans_600SemiBold' }}>Monthly</Text>: $9.99 USD per month — unlocks all premium features for 1 month.{'\n'}
+            • <Text style={{ fontFamily: 'DMSans_600SemiBold' }}>Yearly</Text>: $69.99 USD per year — unlocks all premium features for 12 months (equivalent to $5.83/month).{'\n\n'}
+            Payment will be charged to your Apple ID account at confirmation of purchase.
+            Your subscription automatically renews unless auto-renew is turned off at least 24 hours before the end of the current period.
+            Your account will be charged for renewal within 24 hours prior to the end of the current period at the price of the currently-selected plan.
+            You can manage and cancel your subscription by going to Settings → Apple ID → Subscriptions after purchase.
+            Any unused portion of a free trial period, if offered, will be forfeited when the user purchases a subscription.
+          </Text>
         </View>
 
         {useRc && (
           <Text style={[styles.iapNote, { color: c.textMuted }]}>
-            Subscription auto-renews until canceled. Manage or cancel anytime in{' '}
+            Manage or cancel anytime in{' '}
             {Platform.OS === 'ios' ? 'Settings → Apple ID → Subscriptions' : 'Play Store → Subscriptions'}.
           </Text>
         )}
@@ -425,6 +441,16 @@ const styles = StyleSheet.create({
   iapNote: {
     fontFamily: 'DMSans_400Regular', fontSize: 10, lineHeight: 14,
     textAlign: 'center', marginTop: 12, paddingHorizontal: 12,
+  },
+
+  disclaimerBox: {
+    borderRadius: 10, borderWidth: 0.5, padding: 12, marginTop: 16,
+  },
+  disclaimerTitle: {
+    fontFamily: 'DMSans_700Bold', fontSize: 13, marginBottom: 6,
+  },
+  disclaimerText: {
+    fontFamily: 'DMSans_400Regular', fontSize: 11, lineHeight: 16,
   },
 
   sectionTitle: { fontFamily: 'DMSans_700Bold', fontSize: 14, marginTop: 28, marginBottom: 10 },

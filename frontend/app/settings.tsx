@@ -10,7 +10,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useTheme, ThemeMode } from '../src/theme';
 import { useI18n, LANGUAGES, LanguageCode } from '../src/i18n';
-import { getSettings, updateSettings, resetAllData } from '../src/api';
+import { getSettings, updateSettings, resetAllData, deleteAccount } from '../src/api';
 import { getBillingMe, cancelSubscription, BillingMe } from '../src/featuresApi';
 import { generateExport } from '../src/localFeaturesApi';
 import { useAuth } from '../src/auth';
@@ -49,6 +49,51 @@ export default function SettingsScreen() {
             await resetAllData();
             await AsyncStorage.removeItem('finflow_onboarding_complete');
             router.replace('/onboarding');
+          },
+        },
+      ],
+    );
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Are you sure? This will permanently delete your account and all your data. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            // Second confirmation
+            Alert.alert(
+              'Final confirmation',
+              'This is your last chance. All your data will be permanently erased and you will be logged out.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete my account',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await deleteAccount();
+                      await AsyncStorage.multiRemove([
+                        'finflow_token',
+                        'finflow_user',
+                        'finflow_onboarding_complete',
+                      ]);
+                      Alert.alert(
+                        'Account deleted',
+                        'Your account has been permanently deleted.',
+                        [{ text: 'OK', onPress: () => router.replace('/landing' as any) }],
+                      );
+                    } catch (e: any) {
+                      Alert.alert('Error', e?.message?.slice(0, 160) || 'Could not delete account. Please try again.');
+                    }
+                  },
+                },
+              ],
+            );
           },
         },
       ],
@@ -297,6 +342,24 @@ export default function SettingsScreen() {
           <TouchableOpacity testID="reset-data-btn" onPress={handleReset} style={styles.resetRow}>
             <Ionicons name="trash-outline" size={20} color={c.expense} />
             <Text style={[styles.resetText, { color: c.expense }]}>Reset All Data</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Account */}
+        <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Account</Text>
+        <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.expense }]}>
+          <TouchableOpacity
+            testID="delete-account-btn"
+            onPress={handleDeleteAccount}
+            style={styles.resetRow}
+          >
+            <Ionicons name="person-remove-outline" size={20} color={c.expense} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.resetText, { color: c.expense }]}>Delete Account</Text>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 12, color: c.textMuted, marginTop: 2 }}>
+                Permanently delete your account and all data
+              </Text>
+            </View>
           </TouchableOpacity>
         </View>
 
