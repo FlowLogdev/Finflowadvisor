@@ -3,7 +3,7 @@
 
 import { Platform } from 'react-native';
 
-const IOS_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY || '';
+const IOS_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY || 'appl_OHMXsxmLFatVOmxPUkRdzMHzWKq';
 const ANDROID_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY || '';
 
 // RevenueCat entitlement identifier (must exactly match the RevenueCat dashboard).
