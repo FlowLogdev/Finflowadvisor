@@ -33,7 +33,7 @@ type UnifiedPackage = {
   label: string;
   price: number;
   priceString: string;
-  period: 'month' | 'year';
+  period: 'month' | 'year' | 'lifetime';
 };
 
 export default function PremiumScreen() {
@@ -66,14 +66,20 @@ export default function PremiumScreen() {
             getRcSubscriptionState(),
           ]);
           const unified: UnifiedPackage[] = rcPkgs
-            .filter((p) => p.periodUnit === 'month' || p.periodUnit === 'year')
+            .filter((p) => p.periodUnit === 'month' || p.periodUnit === 'year' || p.periodUnit === null)
             .map((p) => ({
               source: 'rc' as const,
               id: p.identifier,
-              label: p.periodUnit === 'year' ? 'Premium Yearly' : 'Premium Monthly',
+              label:
+                p.periodUnit === 'year' ? 'Premium Yearly'
+                : p.periodUnit === 'month' ? 'Premium Monthly'
+                : 'Lifetime',
               price: p.price,
               priceString: p.priceString,
-              period: p.periodUnit as 'month' | 'year',
+              period:
+                p.periodUnit === 'year' ? 'year'
+                : p.periodUnit === 'month' ? 'month'
+                : 'lifetime',
             }));
           setPackages(unified);
           const yearly = unified.find((u) => u.period === 'year');
@@ -102,9 +108,17 @@ export default function PremiumScreen() {
             source: 'stripe' as const,
             id: 'finflow_premium_yearly',
             label: 'Yearly',
-            price: 69.99,
-            priceString: '$69.99',
+            price: 79.99,
+            priceString: '$79.99',
             period: 'year',
+          },
+          {
+            source: 'stripe' as const,
+            id: 'finflow_premium_lifetime',
+            label: 'Lifetime',
+            price: 499.00,
+            priceString: '$499.00',
+            period: 'lifetime',
           },
         ];
         setPackages(unified);
@@ -348,7 +362,8 @@ export default function PremiumScreen() {
           </Text>
           <Text style={[styles.disclaimerText, { color: c.textMuted }]}>
             • <Text style={{ fontFamily: 'DMSans_600SemiBold' }}>Monthly</Text>: $9.99 USD per month — unlocks all premium features for 1 month.{'\n'}
-            • <Text style={{ fontFamily: 'DMSans_600SemiBold' }}>Yearly</Text>: $69.99 USD per year — unlocks all premium features for 12 months (equivalent to $5.83/month).{'\n\n'}
+            • <Text style={{ fontFamily: 'DMSans_600SemiBold' }}>Yearly</Text>: $79.99 USD per year — unlocks all premium features for 12 months (equivalent to $6.67/month).{'\n'}
+            • <Text style={{ fontFamily: 'DMSans_600SemiBold' }}>Lifetime</Text>: $499.00 USD one-time payment — unlocks all premium features forever, no recurring charge.{'\n\n'}
             Payment will be charged to your Apple ID account at confirmation of purchase.
             Your subscription automatically renews unless auto-renew is turned off at least 24 hours before the end of the current period.
             Your account will be charged for renewal within 24 hours prior to the end of the current period at the price of the currently-selected plan.
