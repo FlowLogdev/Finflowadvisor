@@ -98,7 +98,7 @@ export default function PremiumScreen() {
         const unified: UnifiedPackage[] = [
           {
             source: 'stripe' as const,
-            id: 'finflow_premium_monthly',
+            id: 'com.finflowadvisors.premium.monthly',
             label: 'Monthly',
             price: 9.99,
             priceString: '$9.99',
@@ -106,7 +106,7 @@ export default function PremiumScreen() {
           },
           {
             source: 'stripe' as const,
-            id: 'finflow_premium_yearly',
+            id: 'com.finflowadvisors.premium.yearly',
             label: 'Yearly',
             price: 79.99,
             priceString: '$79.99',
@@ -114,7 +114,7 @@ export default function PremiumScreen() {
           },
           {
             source: 'stripe' as const,
-            id: 'finflow_premium_lifetime',
+            id: 'com.finflowadvisors.premium.lifetime',
             label: 'Lifetime',
             price: 499.00,
             priceString: '$499.00',
@@ -122,7 +122,7 @@ export default function PremiumScreen() {
           },
         ];
         setPackages(unified);
-        setSelected('finflow_premium_yearly');
+        setSelected('com.finflowadvisors.premium.yearly');
         // Billing status check (silent — fine if sister project is down)
         const me = await getBillingMe().catch(() => ({ premium: false }));
         setIsPremium(!!me.premium);

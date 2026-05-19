@@ -11,7 +11,7 @@ const PREMIUM_ENTITLEMENT = 'FinFlowAdvisors Pro';
 
 export type RcPackage = {
   identifier: string;           // '$rc_monthly' | '$rc_annual'
-  productId: string;            // 'finflow_premium_monthly' | 'finflow_premium_yearly'
+  productId: string;            // 'com.finflowadvisors.premium.monthly' | 'com.finflowadvisors.premium.yearly' | 'com.finflowadvisors.premium.lifetime'
   title: string;                // Display name from store
   price: number;                // Decimal price, e.g. 9.99
   priceString: string;          // Formatted e.g. "$9.99"
