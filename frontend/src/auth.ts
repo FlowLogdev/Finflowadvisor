@@ -12,18 +12,24 @@ export interface User {
 
 interface AuthContextValue {
   user: User | null;
+  isGuest: boolean;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  continueAsGuest: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
+  isGuest: false,
   loading: true,
   login: async () => {},
   register: async () => {},
   logout: async () => {},
+  continueAsGuest: async () => {},
+  deleteAccount: async () => {},
 });
 
 let _token: string | null = null;
@@ -34,6 +40,7 @@ export function getToken(): string | null {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [isGuest, setIsGuest] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -51,6 +58,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             _token = null;
             await AsyncStorage.removeItem('finflow_token');
           }
+        }
+        if (!_token) {
+          const guest = await AsyncStorage.getItem('finflow_guest');
+          if (guest === 'true') setIsGuest(true);
         }
       } catch (_) {}
       setLoading(false);
@@ -71,6 +82,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     _token = data.access_token;
     await AsyncStorage.setItem('finflow_token', data.access_token);
     await AsyncStorage.setItem('finflow_refresh', data.refresh_token);
+    await AsyncStorage.removeItem('finflow_guest');
+    setIsGuest(false);
     setUser(data.user);
   }, []);
 
@@ -88,18 +101,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     _token = data.access_token;
     await AsyncStorage.setItem('finflow_token', data.access_token);
     await AsyncStorage.setItem('finflow_refresh', data.refresh_token);
+    await AsyncStorage.removeItem('finflow_guest');
+    setIsGuest(false);
     setUser(data.user);
   }, []);
 
   const logout = useCallback(async () => {
     _token = null;
-    await AsyncStorage.multiRemove(['finflow_token', 'finflow_refresh']);
+    await AsyncStorage.multiRemove(['finflow_token', 'finflow_refresh', 'finflow_guest']);
     setUser(null);
+    setIsGuest(false);
+  }, []);
+
+  const continueAsGuest = useCallback(async () => {
+    await AsyncStorage.setItem('finflow_guest', 'true');
+    setIsGuest(true);
+  }, []);
+
+  const deleteAccount = useCallback(async () => {
+    if (!_token) throw new Error('Not authenticated');
+    const res = await fetch(`${BASE_URL}/api/auth/account`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${_token}` },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Could not delete account' }));
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Could not delete account');
+    }
+    _token = null;
+    await AsyncStorage.multiRemove(['finflow_token', 'finflow_refresh', 'finflow_guest', 'finflow_onboarding_complete']);
+    setUser(null);
+    setIsGuest(false);
   }, []);
 
   return React.createElement(
     AuthContext.Provider,
-    { value: { user, loading, login, register, logout } },
+    { value: { user, isGuest, loading, login, register, logout, continueAsGuest, deleteAccount } },
     children
   );
 }

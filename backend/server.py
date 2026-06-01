@@ -125,6 +125,16 @@ async def refresh_token(request: Request):
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
+@api_router.delete("/auth/account")
+async def delete_account(user: dict = Depends(get_current_user)):
+    uid = user["_id"]
+    collections = ["settings", "bills", "expenses", "savings_goals",
+                   "ai_messages", "ai_insights", "watchlist", "support_tickets"]
+    for col in collections:
+        await db[col].delete_many({"user_id": uid})
+    await db.users.delete_one({"_id": ObjectId(uid)})
+    return {"success": True}
+
 # ── Data Models ─────────────────────────────────────────────────────
 
 class Settings(BaseModel):

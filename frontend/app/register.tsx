@@ -13,7 +13,12 @@ import { FinFlowLogo } from '../src/components/LogoHeader';
 export default function RegisterScreen() {
   const c = useThemeColors();
   const router = useRouter();
-  const { register } = useAuth();
+  const { register, continueAsGuest } = useAuth();
+
+  const handleGuest = async () => {
+    await continueAsGuest();
+    router.replace('/(tabs)/dashboard' as any);
+  };
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -107,6 +112,10 @@ export default function RegisterScreen() {
               <Text style={[styles.switchLink, { color: c.income }]}> Log In</Text>
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity testID="register-guest-btn" onPress={handleGuest} style={styles.guestBtn}>
+            <Text style={[styles.guestText, { color: c.textMuted }]}>Continue as Guest</Text>
+          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -132,4 +141,6 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: 'row', justifyContent: 'center' },
   switchText: { fontFamily: 'DMSans_400Regular', fontSize: 15 },
   switchLink: { fontFamily: 'DMSans_600SemiBold', fontSize: 15 },
+  guestBtn: { alignItems: 'center', paddingVertical: 12 },
+  guestText: { fontFamily: 'DMSans_400Regular', fontSize: 14, textDecorationLine: 'underline' },
 });

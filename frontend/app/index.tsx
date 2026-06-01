@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { Redirect } from 'expo-router';
 import { View, ActivityIndicator } from 'react-native';
 import { useThemeColors } from '../src/theme';
@@ -6,7 +5,7 @@ import { useAuth } from '../src/auth';
 
 export default function Index() {
   const c = useThemeColors();
-  const { user, loading } = useAuth();
+  const { user, isGuest, loading } = useAuth();
 
   if (loading) {
     return (
@@ -16,9 +15,7 @@ export default function Index() {
     );
   }
 
-  // Authenticated → go to dashboard tabs
-  if (user) return <Redirect href="/(tabs)/setup" />;
+  if (user || isGuest) return <Redirect href="/(tabs)/dashboard" />;
 
-  // Not authenticated → show landing page
   return <Redirect href="/landing" />;
 }

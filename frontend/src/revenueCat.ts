@@ -1,22 +1,23 @@
-// RevenueCat integration for iOS + Android IAP ($9.99/mo, $69.99/yr).
+// RevenueCat integration for iOS + Android IAP.
 // Web always returns `available: false` — the /premium screen falls back to Stripe on web.
 
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const IOS_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY || '';
 const ANDROID_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY || '';
 
-// RevenueCat entitlement identifier (must exactly match the RevenueCat dashboard).
 const PREMIUM_ENTITLEMENT = 'FinFlowAdvisors Pro';
+const ANON_ID_KEY = 'finflow_rc_anon_id';
 
 export type RcPackage = {
-  identifier: string;           // '$rc_monthly' | '$rc_annual'
-  productId: string;            // 'finflow_premium_monthly' | 'finflow_premium_yearly'
-  title: string;                // Display name from store
-  price: number;                // Decimal price, e.g. 9.99
-  priceString: string;          // Formatted e.g. "$9.99"
-  currencyCode: string;         // "USD"
-  periodUnit: 'month' | 'year' | 'week' | 'day' | null;
+  identifier: string;
+  productId: string;
+  title: string;
+  price: number;
+  priceString: string;
+  currencyCode: string;
+  periodUnit: 'month' | 'year' | 'week' | 'day' | 'lifetime' | null;
 };
 
 export type RcSubscriptionState = {
@@ -24,7 +25,7 @@ export type RcSubscriptionState = {
   expirationDate?: string;
   productIdentifier?: string;
   willRenew?: boolean;
-  managementURL?: string;       // Deep link to Apple/Google subscription mgmt
+  managementURL?: string;
 };
 
 let initialized = false;
@@ -40,17 +41,25 @@ export function isRcAvailable(): boolean {
   return !!getPlatformKey();
 }
 
-export async function initRevenueCat(userId: string): Promise<boolean> {
+async function getOrCreateAnonId(): Promise<string> {
+  let id = await AsyncStorage.getItem(ANON_ID_KEY);
+  if (!id) {
+    id = 'anon_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    await AsyncStorage.setItem(ANON_ID_KEY, id);
+  }
+  return id;
+}
+
+export async function initRevenueCat(userId: string | null): Promise<boolean> {
   if (!isRcAvailable()) return false;
   try {
-    // Dynamic import so web bundles never load the native module
     const Purchases = (await import('react-native-purchases')).default;
+    const rcUserId = userId || await getOrCreateAnonId();
     if (!initialized) {
-      Purchases.configure({ apiKey: getPlatformKey(), appUserID: userId });
+      Purchases.configure({ apiKey: getPlatformKey(), appUserID: rcUserId });
       initialized = true;
     } else {
-      // User may have logged in as a different account — swap identity
-      await Purchases.logIn(userId);
+      await Purchases.logIn(rcUserId);
     }
     return true;
   } catch (e) {
@@ -76,7 +85,7 @@ export async function getRcOfferings(): Promise<RcPackage[]> {
         p.packageType === 'MONTHLY' ? 'month'
         : p.packageType === 'ANNUAL' ? 'year'
         : p.packageType === 'WEEKLY' ? 'week'
-        : p.packageType === 'LIFETIME' ? null
+        : p.packageType === 'LIFETIME' ? 'lifetime'
         : null,
     }));
   } catch (e) {
@@ -86,14 +95,14 @@ export async function getRcOfferings(): Promise<RcPackage[]> {
 }
 
 export async function purchaseRcPackage(
-  identifier: '$rc_monthly' | '$rc_annual'
+  identifier: string
 ): Promise<{ success: boolean; premium: boolean; userCancelled?: boolean; error?: string }> {
   if (!isRcAvailable()) return { success: false, premium: false, error: 'IAP not available on this platform' };
   try {
     const Purchases = (await import('react-native-purchases')).default;
     const offerings = await Purchases.getOfferings();
     const pkg = offerings?.current?.availablePackages?.find((p: any) => p.identifier === identifier);
-    if (!pkg) return { success: false, premium: false, error: 'Package not found' };
+    if (!pkg) return { success: false, premium: false, error: 'Package not found. Please check your connection and try again.' };
     const result: any = await Purchases.purchasePackage(pkg);
     const isPremium = !!result?.customerInfo?.entitlements?.active?.[PREMIUM_ENTITLEMENT];
     return { success: true, premium: isPremium };

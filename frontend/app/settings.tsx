@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator, Platform,
+  View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -14,13 +14,14 @@ import { getSettings, updateSettings, resetAllData } from '../src/api';
 import { getBillingMe, cancelSubscription, BillingMe } from '../src/featuresApi';
 import { generateExport } from '../src/localFeaturesApi';
 import { useAuth } from '../src/auth';
+import { Platform } from 'react-native';
 import { CURRENCIES } from '../src/types';
 
 export default function SettingsScreen() {
   const { colors: c, mode, setMode } = useTheme();
   const { t, language, setLanguage } = useI18n();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, logout, deleteAccount } = useAuth();
   const [currency, setCurrency] = useState('$');
   const [billing, setBilling] = useState<BillingMe | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
@@ -116,6 +117,48 @@ export default function SettingsScreen() {
           },
         },
       ],
+    );
+  };
+
+  const handleLogout = () => {
+    Alert.alert('Log Out', 'Are you sure you want to log out?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Log Out', style: 'destructive', onPress: async () => { await logout(); router.replace('/landing' as any); } },
+    ]);
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'This will permanently delete your account and all your data. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you absolutely sure?',
+              'All your bills, expenses, goals, and history will be permanently erased.',
+              [
+                { text: 'Keep Account', style: 'cancel' },
+                {
+                  text: 'Yes, Delete Everything',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await deleteAccount();
+                      router.replace('/landing' as any);
+                    } catch (e: any) {
+                      Alert.alert('Error', e?.message?.slice(0, 160) || 'Could not delete account. Please try again.');
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
     );
   };
 
@@ -293,6 +336,29 @@ export default function SettingsScreen() {
             <Text style={[styles.resetText, { color: c.expense }]}>Reset All Data</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Account */}
+        {user && (
+          <>
+            <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Account</Text>
+            <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border, padding: 0 }]}>
+              <TouchableOpacity testID="logout-btn" onPress={handleLogout} style={styles.actionRow}>
+                <Ionicons name="log-out-outline" size={20} color={c.textMuted} />
+                <Text style={[styles.actionText, { color: c.textPrimary }]}>Log Out</Text>
+                <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="delete-account-btn"
+                onPress={handleDeleteAccount}
+                style={[styles.actionRow, { borderTopWidth: 0.5, borderTopColor: c.border }]}
+              >
+                <Ionicons name="person-remove-outline" size={20} color={c.expense} />
+                <Text style={[styles.actionText, { color: c.expense }]}>Delete Account</Text>
+                <Ionicons name="chevron-forward" size={16} color={c.expense} />
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
 
         {/* About */}
         <Text style={[styles.sectionLabel, { color: c.textMuted }]}>About</Text>

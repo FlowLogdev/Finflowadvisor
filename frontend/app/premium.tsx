@@ -29,11 +29,11 @@ const BENEFITS = [
 
 type UnifiedPackage = {
   source: 'rc' | 'stripe';
-  id: string;                   // rc identifier ($rc_monthly) OR stripe package id
+  id: string;
   label: string;
   price: number;
   priceString: string;
-  period: 'month' | 'year';
+  period: 'month' | 'year' | 'lifetime';
 };
 
 export default function PremiumScreen() {
@@ -53,27 +53,30 @@ export default function PremiumScreen() {
 
   useEffect(() => {
     (async () => {
-      const rcOk = isRcAvailable() && user?.id
-        ? await initRevenueCat(user.id)
+      // On iOS/Android always try RevenueCat — works even without a logged-in user
+      const rcOk = isRcAvailable()
+        ? await initRevenueCat(user?.id || null)
         : false;
       setUseRc(rcOk);
 
       if (rcOk) {
-        // iOS/Android path — use RevenueCat
+        // iOS/Android path — use RevenueCat (Apple IAP / Google Play)
         try {
           const [rcPkgs, sub] = await Promise.all([
             getRcOfferings(),
             getRcSubscriptionState(),
           ]);
           const unified: UnifiedPackage[] = rcPkgs
-            .filter((p) => p.periodUnit === 'month' || p.periodUnit === 'year')
+            .filter((p) => p.periodUnit !== 'week' && p.periodUnit !== 'day')
             .map((p) => ({
               source: 'rc' as const,
               id: p.identifier,
-              label: p.periodUnit === 'year' ? 'Premium Yearly' : 'Premium Monthly',
+              label: p.periodUnit === 'year' ? 'Premium Yearly'
+                : p.periodUnit === 'lifetime' ? 'Premium Lifetime'
+                : 'Premium Monthly',
               price: p.price,
               priceString: p.priceString,
-              period: p.periodUnit as 'month' | 'year',
+              period: (p.periodUnit === 'lifetime' ? 'lifetime' : p.periodUnit ?? 'month') as 'month' | 'year' | 'lifetime',
             }));
           setPackages(unified);
           const yearly = unified.find((u) => u.period === 'year');
@@ -84,10 +87,10 @@ export default function PremiumScreen() {
             setManagementURL(sub.managementURL);
           }
         } catch (e: any) {
-          Alert.alert('Error', 'Could not load in-app purchases.');
+          Alert.alert('Store Error', 'Could not load in-app purchases. Make sure you are signed in to the App Store and try again.');
         }
       } else {
-        // Web path — use Stripe via finflowadvisors.com
+        // Web-only path — use Stripe (never reached on iOS/Android when RC key is set)
         try {
           const [pkgs, me] = await Promise.all([
             getPackages(),
@@ -264,6 +267,7 @@ export default function PremiumScreen() {
               {packages.map((p) => {
                 const isSel = selected === p.id;
                 const isYear = p.period === 'year';
+                const isLifetime = p.period === 'lifetime';
                 const monthlyEq = isYear ? (p.price / 12).toFixed(2) : p.price.toFixed(2);
                 return (
                   <TouchableOpacity
@@ -283,16 +287,28 @@ export default function PremiumScreen() {
                         <Text style={styles.savePillText}>SAVE 40%</Text>
                       </View>
                     )}
+                    {isLifetime && (
+                      <View style={[styles.savePill, { backgroundColor: c.savings }]}>
+                        <Text style={styles.savePillText}>BEST VALUE</Text>
+                      </View>
+                    )}
                     <Text style={[styles.planLabel, { color: c.textPrimary }]}>{p.label}</Text>
                     <View style={styles.priceRow}>
                       <Text style={[styles.priceAmt, { color: c.textPrimary }]}>{p.priceString}</Text>
-                      <Text style={[styles.pricePeriod, { color: c.textMuted }]}>
-                        /{p.period === 'year' ? 'year' : 'month'}
-                      </Text>
+                      {!isLifetime && (
+                        <Text style={[styles.pricePeriod, { color: c.textMuted }]}>
+                          /{p.period === 'year' ? 'year' : 'month'}
+                        </Text>
+                      )}
                     </View>
                     {isYear && (
                       <Text style={[styles.planEq, { color: c.textMuted }]}>
                         Just ${monthlyEq}/month
+                      </Text>
+                    )}
+                    {isLifetime && (
+                      <Text style={[styles.planEq, { color: c.textMuted }]}>
+                        One-time payment, forever
                       </Text>
                     )}
                     {isSel && (

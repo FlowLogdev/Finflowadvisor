@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { useThemeColors } from '../src/theme';
 import { ThemeToggle } from '../src/components/LogoHeader';
+import { useAuth } from '../src/auth';
 
 const { width } = Dimensions.get('window');
 
@@ -23,6 +24,12 @@ const FEATURES = [
 export default function LandingScreen() {
   const c = useThemeColors();
   const router = useRouter();
+  const { continueAsGuest } = useAuth();
+
+  const handleGuest = async () => {
+    await continueAsGuest();
+    router.replace('/(tabs)/dashboard' as any);
+  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.background }]}>
@@ -66,6 +73,9 @@ export default function LandingScreen() {
               <Text style={[styles.secondaryBtnText, { color: c.textPrimary }]}>Log In</Text>
             </TouchableOpacity>
           </View>
+          <TouchableOpacity testID="landing-guest-btn" onPress={handleGuest} style={styles.guestBtn}>
+            <Text style={[styles.guestText, { color: c.textMuted }]}>Continue as Guest</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Stats */}
@@ -134,6 +144,8 @@ const styles = StyleSheet.create({
   heroTitle: { fontFamily: 'DMSans_700Bold', fontSize: 36, lineHeight: 44, textAlign: 'center', marginBottom: 16 },
   heroSub: { fontFamily: 'DMSans_400Regular', fontSize: 17, lineHeight: 26, textAlign: 'center', maxWidth: 500, marginBottom: 32 },
   heroBtns: { flexDirection: 'row', gap: 12, flexWrap: 'wrap', justifyContent: 'center' },
+  guestBtn: { marginTop: 16, paddingVertical: 8 },
+  guestText: { fontFamily: 'DMSans_400Regular', fontSize: 14, textDecorationLine: 'underline' },
   primaryBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, paddingHorizontal: 28, borderRadius: 12, gap: 8 },
   primaryBtnText: { fontFamily: 'DMSans_600SemiBold', fontSize: 16, color: '#fff' },
   secondaryBtn: { paddingVertical: 16, paddingHorizontal: 28, borderRadius: 12, borderWidth: 1 },
