@@ -333,7 +333,7 @@ export default function PremiumScreen() {
             <Text style={[styles.fineprint, { color: c.textMuted }]}>
               {useRc
                 ? 'Billed via your ' + (Platform.OS === 'ios' ? 'Apple ID' : 'Google account') + ' account. Cancel anytime.'
-                : 'Secure checkout by Stripe. Cancel anytime.'}
+                : 'Manage your subscription in your Apple ID Settings. Cancel anytime.'}
             </Text>
           </>
         )}
@@ -472,6 +472,11 @@ const styles = StyleSheet.create({
   benefitsCard: { borderRadius: 12, borderWidth: 0.5, padding: 4 },
   benefitRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 10, paddingHorizontal: 10,
+  },
+  benefitText: { fontFamily: 'DMSans_500Medium', fontSize: 13, flex: 1 },
+});
+ter', gap: 10,
     paddingVertical: 10, paddingHorizontal: 10,
   },
   benefitText: { fontFamily: 'DMSans_500Medium', fontSize: 13, flex: 1 },
