@@ -174,6 +174,26 @@ export default function DashboardScreen() {
           {/* ── Financial Immune Score ── */}
           <ImmuneScoreCard />
 
+          {/* PROMINENT: Go Premium banner — REQUIRED entry point (Apple 2.1(b) fix) */}
+          <TouchableOpacity
+            testID="dashboard-go-premium"
+            accessibilityLabel="Go Premium"
+            style={styles.premiumBanner}
+            onPress={() => router.push('/premium')}
+            activeOpacity={0.85}
+          >
+            <View style={styles.premiumBannerLeft}>
+              <Text style={styles.premiumBannerCrown}>👑</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.premiumBannerTitle}>Go Premium</Text>
+                <Text style={styles.premiumBannerSubtitle}>
+                  Unlock AI Advisor, unlimited exports & Lifetime plan
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.premiumBannerArrow}>→</Text>
+          </TouchableOpacity>
+
           {/* ── Quick Tools Row ── */}
           <View style={styles.quickToolsRow}>
             <TouchableOpacity
@@ -463,6 +483,26 @@ const styles = StyleSheet.create({
 
   // Quick tools row
   quickToolsRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  premiumBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#2d5a3d',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  premiumBannerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 },
+  premiumBannerCrown: { fontSize: 28 },
+  premiumBannerTitle: { fontFamily: 'DMSans_700Bold', fontSize: 17, color: '#ffffff' },
+  premiumBannerSubtitle: { fontFamily: 'DMSans_400Regular', fontSize: 12, color: '#e8f0ea', marginTop: 2 },
+  premiumBannerArrow: { fontFamily: 'DMSans_700Bold', fontSize: 22, color: '#ffffff', marginLeft: 8 },
   quickTool: {
     flex: 1, borderRadius: 12, borderWidth: 0.5,
     paddingVertical: 14, paddingHorizontal: 8, alignItems: 'center',

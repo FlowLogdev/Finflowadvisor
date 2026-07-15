@@ -44,6 +44,7 @@ export default function PremiumScreen() {
   const [packages, setPackages] = useState<UnifiedPackage[]>([]);
   const [selected, setSelected] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
@@ -84,13 +85,17 @@ export default function PremiumScreen() {
           setPackages(unified);
           const yearly = unified.find((u) => u.period === 'year');
           setSelected((yearly || unified[0])?.id || '');
+          if (unified.length === 0) {
+            setLoadError('No in-app purchases were returned by the App Store. Please make sure you are signed in with a valid Apple ID (sandbox for TestFlight) and the products are configured in App Store Connect.');
+          }
           if (sub?.premium) {
             setIsPremium(true);
             setPremiumUntil(sub.expirationDate);
             setManagementURL(sub.managementURL);
           }
         } catch (e: any) {
-          Alert.alert('Error', 'Could not load in-app purchases.');
+          const msg = typeof e?.message === 'string' ? e.message : String(e);
+          setLoadError(`Could not load in-app purchases from the App Store. ${msg}`);
         }
       } else {
         // Web path — use hardcoded pricing to avoid sister-project 503 errors.
@@ -261,6 +266,33 @@ export default function PremiumScreen() {
             </Text>
             <Text style={[styles.heroSub, { color: c.textMuted }]}>
               Get AI coaching, smart alerts, exports, and monthly reports — for less than a coffee a month.
+            </Text>
+          </View>
+        )}
+
+        {!isPremium && loadError && (
+          <View
+            testID="paywall-load-error"
+            style={{
+              backgroundColor: '#fdecea',
+              borderColor: '#c84b1f',
+              borderWidth: 1,
+              borderRadius: 12,
+              padding: 16,
+              marginVertical: 16,
+            }}
+          >
+            <Text style={{ fontFamily: 'DMSans_700Bold', color: '#c84b1f', fontSize: 15, marginBottom: 6 }}>
+              ⚠ Unable to load In-App Purchases
+            </Text>
+            <Text style={{ fontFamily: 'DMSans_400Regular', color: '#7a2f14', fontSize: 13, lineHeight: 18 }}>
+              {loadError}
+            </Text>
+            <Text style={{ fontFamily: 'DMSans_400Regular', color: '#7a2f14', fontSize: 12, marginTop: 8, lineHeight: 16 }}>
+              Expected product IDs:{'\n'}
+              • com.finflowadvisors.premium.monthly{'\n'}
+              • com.finflowadvisors.premium.yearly{'\n'}
+              • com.finflowadvisors.premium.lifetime
             </Text>
           </View>
         )}
