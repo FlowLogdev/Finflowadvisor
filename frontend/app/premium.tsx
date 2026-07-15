@@ -476,8 +476,3 @@ const styles = StyleSheet.create({
   },
   benefitText: { fontFamily: 'DMSans_500Medium', fontSize: 13, flex: 1 },
 });
-ter', gap: 10,
-    paddingVertical: 10, paddingHorizontal: 10,
-  },
-  benefitText: { fontFamily: 'DMSans_500Medium', fontSize: 13, flex: 1 },
-});
