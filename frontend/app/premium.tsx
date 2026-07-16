@@ -86,6 +86,8 @@ export default function PremiumScreen() {
             setIsPremium(true);
             setPremiumUntil(sub.expirationDate);
             setManagementURL(sub.managementURL);
+          } else if (unified.length === 0) {
+            setLoadError('No subscription plans are available right now. If this app was just submitted to the App Store, in-app purchases may still be pending Apple review.');
           }
         } catch (e: any) {
           const msg = typeof e?.message === 'string' ? e.message : String(e);
