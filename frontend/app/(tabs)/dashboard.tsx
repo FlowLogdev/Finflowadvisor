@@ -177,6 +177,24 @@ export default function DashboardScreen() {
           {/* ── Financial Immune System Score ── */}
           {immuneScore && <ImmuneScoreCard score={immuneScore} c={c} router={router} />}
 
+          <TouchableOpacity
+            testID="dashboard-go-premium"
+            style={styles.premiumBanner}
+            onPress={() => router.push('/premium')}
+            activeOpacity={0.85}
+          >
+            <View style={styles.premiumBannerLeft}>
+              <Text style={styles.premiumBannerCrown}>👑</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.premiumBannerTitle}>Go Premium</Text>
+                <Text style={styles.premiumBannerSubtitle}>
+                  Unlock AI Advisor, unlimited exports & Lifetime plan
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.premiumBannerArrow}>→</Text>
+          </TouchableOpacity>
+
           {/* ── AI Daily Insight (FinBot) ── */}
           <TouchableOpacity
             activeOpacity={0.85}
@@ -552,6 +570,17 @@ const styles = StyleSheet.create({
   // Tip
   tipCard: { borderRadius: 12, borderWidth: 0.5, padding: 16, flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 24 },
   tipText: { fontFamily: 'DMSans_400Regular', fontSize: 14, lineHeight: 20, flex: 1 },
+
+  // Premium banner
+  premiumBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: '#b8740a', borderRadius: 12, padding: 14, marginBottom: 24,
+  },
+  premiumBannerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
+  premiumBannerCrown: { fontSize: 22 },
+  premiumBannerTitle: { fontFamily: 'DMSans_700Bold', fontSize: 14, color: '#fff' },
+  premiumBannerSubtitle: { fontFamily: 'DMSans_400Regular', fontSize: 12, color: '#fff', opacity: 0.9, marginTop: 2 },
+  premiumBannerArrow: { fontFamily: 'DMSans_700Bold', fontSize: 18, color: '#fff', marginLeft: 8 },
 
   // AI Insight card
   aiCard: {

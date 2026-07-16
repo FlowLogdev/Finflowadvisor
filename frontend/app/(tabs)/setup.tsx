@@ -4,7 +4,7 @@ import {
   StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useThemeColors } from '../../src/theme';
 import { getSettings, updateSettings } from '../../src/api';
 import { CURRENCIES, Settings } from '../../src/types';
@@ -12,6 +12,7 @@ import { LogoHeader } from '../../src/components/LogoHeader';
 
 export default function SetupScreen() {
   const c = useThemeColors();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [salary, setSalary] = useState('5000');
@@ -82,6 +83,24 @@ export default function SetupScreen() {
           <LogoHeader size={44} />
 
           <Text style={[styles.subtitle, { color: c.textMuted }]}>Configure your monthly budget</Text>
+
+          <TouchableOpacity
+            testID="setup-go-premium"
+            style={styles.premiumBanner}
+            onPress={() => router.push('/premium')}
+            activeOpacity={0.85}
+          >
+            <View style={styles.premiumBannerLeft}>
+              <Text style={styles.premiumBannerCrown}>👑</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.premiumBannerTitle}>Go Premium</Text>
+                <Text style={styles.premiumBannerSubtitle}>
+                  Unlock AI advisor, unlimited exports & Lifetime plan
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.premiumBannerArrow}>→</Text>
+          </TouchableOpacity>
 
           {/* Salary */}
           <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
@@ -226,6 +245,15 @@ const styles = StyleSheet.create({
   scroll: { padding: 24, paddingBottom: 48 },
   title: { fontFamily: 'DMSans_700Bold', fontSize: 32, lineHeight: 40, marginBottom: 4 },
   subtitle: { fontFamily: 'DMSans_400Regular', fontSize: 16, lineHeight: 24, marginBottom: 24 },
+  premiumBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: '#b8740a', borderRadius: 12, padding: 14, marginBottom: 16,
+  },
+  premiumBannerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
+  premiumBannerCrown: { fontSize: 22 },
+  premiumBannerTitle: { fontFamily: 'DMSans_700Bold', fontSize: 14, color: '#fff' },
+  premiumBannerSubtitle: { fontFamily: 'DMSans_400Regular', fontSize: 12, color: '#fff', opacity: 0.9, marginTop: 2 },
+  premiumBannerArrow: { fontFamily: 'DMSans_700Bold', fontSize: 18, color: '#fff', marginLeft: 8 },
   card: { borderRadius: 12, borderWidth: 0.5, padding: 16, marginBottom: 16 },
   label: { fontFamily: 'DMSans_500Medium', fontSize: 14, marginBottom: 12 },
   salaryRow: { flexDirection: 'row', alignItems: 'center' },

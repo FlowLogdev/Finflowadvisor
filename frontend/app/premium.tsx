@@ -44,6 +44,7 @@ export default function PremiumScreen() {
   const [packages, setPackages] = useState<UnifiedPackage[]>([]);
   const [selected, setSelected] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
@@ -87,9 +88,10 @@ export default function PremiumScreen() {
             setManagementURL(sub.managementURL);
           }
         } catch (e: any) {
-          Alert.alert('Store Error', 'Could not load in-app purchases. Make sure you are signed in to the App Store and try again.');
+          const msg = typeof e?.message === 'string' ? e.message : String(e);
+          setLoadError(`Could not load in-app purchases from the App Store. ${msg}`);
         }
-      } else {
+      } else if (Platform.OS === "web") {
         // Web-only path — use Stripe (never reached on iOS/Android when RC key is set)
         try {
           const [pkgs, me] = await Promise.all([
@@ -136,7 +138,7 @@ export default function PremiumScreen() {
         } else if (res.error) {
           Alert.alert('Purchase failed', res.error);
         }
-      } else {
+      } else if (Platform.OS === "web") {
         // Web — Stripe
         const origin =
           Platform.OS === 'web' ? window.location.origin : 'https://finflowadvisors.com';
@@ -156,7 +158,7 @@ export default function PremiumScreen() {
           const me = await getBillingMe().catch(() => ({ premium: false }));
           setIsPremium(!!me.premium);
           setPremiumUntil((me as any).premium_until);
-        } else {
+        } else if (Platform.OS === "web") {
           Alert.alert('Not confirmed yet', 'Your subscription should activate shortly.');
         }
       }
@@ -187,7 +189,7 @@ export default function PremiumScreen() {
             res.error || 'No active subscription was found under your Apple ID.'
           );
         }
-      } else {
+      } else if (Platform.OS === "web") {
         const me = await getBillingMe();
         setIsPremium(!!me.premium);
         setPremiumUntil(me.premium_until);
@@ -201,8 +203,15 @@ export default function PremiumScreen() {
   const handleManage = async () => {
     if (useRc && managementURL) {
       Linking.openURL(managementURL);
-    } else {
+    } else if (Platform.OS === "web") {
       router.push('/settings' as any);
+    } else if (useRc) {
+      Alert.alert(
+        'Manage Subscription',
+        Platform.OS === 'ios'
+          ? 'Go to Settings → Apple ID → Subscriptions to manage your subscription.'
+          : 'Go to Play Store → Subscriptions to manage your subscription.'
+      );
     }
   };
 
@@ -210,7 +219,7 @@ export default function PremiumScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={[{ flex: 1 }, { backgroundColor: c.bg }]} edges={['top']}>
+      <SafeAreaView style={[{ flex: 1 }, { backgroundColor: c.background }]} edges={['top']}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={c.income} />
         </View>
@@ -219,7 +228,7 @@ export default function PremiumScreen() {
   }
 
   return (
-    <SafeAreaView style={[{ flex: 1 }, { backgroundColor: c.bg }]} edges={['top']}>
+    <SafeAreaView style={[{ flex: 1 }, { backgroundColor: c.background }]} edges={['top']}>
       <Stack.Screen options={{ headerShown: false }} />
 
       <View style={[styles.header, { borderBottomColor: c.border }]}>
@@ -257,6 +266,23 @@ export default function PremiumScreen() {
             </Text>
             <Text style={[styles.heroSub, { color: c.textMuted }]}>
               Get AI coaching, smart alerts, exports, and monthly reports — for less than a coffee a month.
+            </Text>
+          </View>
+        )}
+
+        {!isPremium && loadError && (
+          <View testID="paywall-load-error" style={{ backgroundColor: '#fdecea', borderColor: '#c84b1f', borderWidth: 1, borderRadius: 12, padding: 16, marginVertical: 16 }}>
+            <Text style={{ fontFamily: 'DMSans_700Bold', color: '#c84b1f', fontSize: 15, marginBottom: 6 }}>
+              ⚠ Unable to load In-App Purchases
+            </Text>
+            <Text style={{ fontFamily: 'DMSans_400Regular', color: '#7a2f14', fontSize: 13, lineHeight: 18 }}>
+              {loadError}
+            </Text>
+            <Text style={{ fontFamily: 'DMSans_400Regular', color: '#7a2f14', fontSize: 12, marginTop: 8, lineHeight: 16 }}>
+              Expected product IDs:{'\n'}
+              • com.finflowadvisors.premium.monthly{'\n'}
+              • com.finflowadvisors.premium.yearly{'\n'}
+              • com.finflowadvisors.premium.lifetime
             </Text>
           </View>
         )}
