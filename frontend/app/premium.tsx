@@ -116,6 +116,9 @@ export default function PremiumScreen() {
         } catch (e: any) {
           Alert.alert('Error', 'Could not load pricing.');
         }
+      } else if (isRcAvailable()) {
+        // Native platform, but RevenueCat failed to initialize
+        setLoadError('Could not connect to the App Store. Please check your internet connection and try again.');
       }
       setLoading(false);
     })();
