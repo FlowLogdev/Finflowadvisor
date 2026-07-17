@@ -33,7 +33,7 @@ type UnifiedPackage = {
   label: string;
   price: number;
   priceString: string;
-  period: 'month' | 'year' | 'lifetime';
+  period: 'month' | 'year';
 };
 
 export default function PremiumScreen() {
@@ -68,16 +68,14 @@ export default function PremiumScreen() {
             getRcSubscriptionState(),
           ]);
           const unified: UnifiedPackage[] = rcPkgs
-            .filter((p) => p.periodUnit !== 'week' && p.periodUnit !== 'day')
+            .filter((p) => p.periodUnit === 'month' || p.periodUnit === 'year')
             .map((p) => ({
               source: 'rc' as const,
               id: p.identifier,
-              label: p.periodUnit === 'year' ? 'Premium Yearly'
-                : p.periodUnit === 'lifetime' ? 'Premium Lifetime'
-                : 'Premium Monthly',
+              label: p.periodUnit === 'year' ? 'Premium Yearly' : 'Premium Monthly',
               price: p.price,
               priceString: p.priceString,
-              period: (p.periodUnit === 'lifetime' ? 'lifetime' : p.periodUnit ?? 'month') as 'month' | 'year' | 'lifetime',
+              period: p.periodUnit as 'month' | 'year',
             }));
           setPackages(unified);
           const yearly = unified.find((u) => u.period === 'year');
@@ -286,8 +284,7 @@ export default function PremiumScreen() {
             <Text style={{ fontFamily: 'DMSans_400Regular', color: '#7a2f14', fontSize: 12, marginTop: 8, lineHeight: 16 }}>
               Expected product IDs:{'\n'}
               • com.finflowadvisors.premium.monthly{'\n'}
-              • com.finflowadvisors.premium.yearly{'\n'}
-              • com.finflowadvisors.premium.lifetime
+              • com.finflowadvisors.premium.yearly
             </Text>
           </View>
         )}
@@ -298,7 +295,6 @@ export default function PremiumScreen() {
               {packages.map((p) => {
                 const isSel = selected === p.id;
                 const isYear = p.period === 'year';
-                const isLifetime = p.period === 'lifetime';
                 const monthlyEq = isYear ? (p.price / 12).toFixed(2) : p.price.toFixed(2);
                 return (
                   <TouchableOpacity
@@ -315,31 +311,19 @@ export default function PremiumScreen() {
                   >
                     {isYear && (
                       <View style={[styles.savePill, { backgroundColor: c.warning }]}>
-                        <Text style={styles.savePillText}>SAVE 40%</Text>
-                      </View>
-                    )}
-                    {isLifetime && (
-                      <View style={[styles.savePill, { backgroundColor: c.savings }]}>
-                        <Text style={styles.savePillText}>BEST VALUE</Text>
+                        <Text style={styles.savePillText}>SAVE 33%</Text>
                       </View>
                     )}
                     <Text style={[styles.planLabel, { color: c.textPrimary }]}>{p.label}</Text>
                     <View style={styles.priceRow}>
                       <Text style={[styles.priceAmt, { color: c.textPrimary }]}>{p.priceString}</Text>
-                      {!isLifetime && (
-                        <Text style={[styles.pricePeriod, { color: c.textMuted }]}>
-                          /{p.period === 'year' ? 'year' : 'month'}
-                        </Text>
-                      )}
+                      <Text style={[styles.pricePeriod, { color: c.textMuted }]}>
+                        /{p.period === 'year' ? 'year' : 'month'}
+                      </Text>
                     </View>
                     {isYear && (
                       <Text style={[styles.planEq, { color: c.textMuted }]}>
                         Just ${monthlyEq}/month
-                      </Text>
-                    )}
-                    {isLifetime && (
-                      <Text style={[styles.planEq, { color: c.textMuted }]}>
-                        One-time payment, forever
                       </Text>
                     )}
                     {isSel && (

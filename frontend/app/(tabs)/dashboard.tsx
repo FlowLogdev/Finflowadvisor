@@ -188,7 +188,7 @@ export default function DashboardScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.premiumBannerTitle}>Go Premium</Text>
                 <Text style={styles.premiumBannerSubtitle}>
-                  Unlock AI Advisor, unlimited exports & Lifetime plan
+                  Unlock AI Advisor, unlimited exports & more
                 </Text>
               </View>
             </View>

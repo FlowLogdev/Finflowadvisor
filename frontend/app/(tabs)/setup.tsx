@@ -95,7 +95,7 @@ export default function SetupScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.premiumBannerTitle}>Go Premium</Text>
                 <Text style={styles.premiumBannerSubtitle}>
-                  Unlock AI advisor, unlimited exports & Lifetime plan
+                  Unlock AI advisor, unlimited exports & more
                 </Text>
               </View>
             </View>
