@@ -45,6 +45,27 @@ export const getMonthlyHistory = () => api('/api/monthly-history');
 export const getMonthlyDetail = (month: string) => api(`/api/monthly-detail/${month}`);
 export const processRecurring = () => api('/api/process-recurring', { method: 'POST' });
 export const resetAllData = () => api('/api/reset', { method: 'POST' });
+// ── Plaid ──────────────────────────────────────────────
+export type PlaidStatus = {
+  connected: boolean;
+  items: Array<{ item_id: string; institution_name?: string; status: string; last_synced_at?: string }>;
+};
+export type PlaidSyncResult = {
+  items_synced: number;
+  expenses_created: number;
+  bills_created_or_updated: number;
+  removed: number;
+};
+export const createPlaidLinkToken = () =>
+  api<{ link_token: string }>('/api/plaid/link-token', { method: 'POST' });
+export const exchangePlaidPublicToken = (public_token: string, institution_name?: string) =>
+  api<{ item_id: string; institution_name?: string }>('/api/plaid/exchange', {
+    method: 'POST',
+    body: JSON.stringify({ public_token, institution_name }),
+  });
+export const syncPlaidTransactions = () => api<PlaidSyncResult>('/api/plaid/sync', { method: 'POST' });
+export const getPlaidStatus = () => api<PlaidStatus>('/api/plaid/status');
+export const disconnectPlaidItem = (item_id: string) => api(`/api/plaid/item/${item_id}`, { method: 'DELETE' });
 // ── AI Advisor ──────────────────────────────────────────────
 export const aiAdvisorChat = (message: string, session_id?: string, language?: string) =>
   api<{ session_id: string; reply: string }>('/api/ai-advisor/chat', {

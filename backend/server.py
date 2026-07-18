@@ -7,7 +7,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
-import os, logging, uuid, bcrypt, jwt
+import os, logging, uuid, bcrypt, jwt, time, asyncio
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, timedelta
@@ -1363,6 +1363,323 @@ async def remove_watchlist(symbol: str, user: dict = Depends(get_current_user)):
     return {"deleted": True}
 
 
+# ── Plaid (Bank Account Sync, US only, Premium) ──────────────────────
+
+import json
+from pymongo.errors import DuplicateKeyError
+import plaid
+from plaid.api import plaid_api
+from plaid.model.products import Products
+from plaid.model.country_code import CountryCode
+from plaid.model.link_token_create_request import LinkTokenCreateRequest
+from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
+from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
+from plaid.model.transactions_sync_request import TransactionsSyncRequest
+from plaid.model.transactions_recurring_get_request import TransactionsRecurringGetRequest
+from plaid.model.item_remove_request import ItemRemoveRequest
+
+PLAID_CLIENT_ID = os.environ.get("PLAID_CLIENT_ID", "")
+PLAID_SECRET = os.environ.get("PLAID_SECRET", "")
+PLAID_ENV = os.environ.get("PLAID_ENV", "sandbox")  # sandbox | production
+FEATURES_BACKEND_URL = os.environ.get("FEATURES_BACKEND_URL", "https://finflowadvisors.com").rstrip("/")
+
+_plaid_configuration = plaid.Configuration(
+    host={"sandbox": plaid.Environment.Sandbox, "production": plaid.Environment.Production}.get(
+        PLAID_ENV, plaid.Environment.Sandbox
+    ),
+    api_key={"clientId": PLAID_CLIENT_ID, "secret": PLAID_SECRET},
+)
+plaid_client = plaid_api.PlaidApi(plaid.ApiClient(_plaid_configuration))
+
+
+class PlaidExchangeRequest(BaseModel):
+    public_token: str
+    institution_name: Optional[str] = None
+
+
+# Plaid's Personal Finance Category `primary` -> this app's fixed category
+# strings (frontend/src/types.ts BILL_CATEGORIES / EXPENSE_CATEGORIES). Categories
+# are unvalidated plain strings server-side, so an unmapped entry falling back to
+# "Other" only degrades UI categorization, it can't break anything.
+PLAID_TO_BILL_CATEGORY = {
+    "RENT_AND_UTILITIES": "Housing",
+    "LOAN_PAYMENTS": "Housing",
+    "HOME_IMPROVEMENT": "Housing",
+    "MEDICAL": "Health",
+    "GENERAL_SERVICES": "Subscriptions",
+    "ENTERTAINMENT": "Subscriptions",
+    "TRANSPORTATION": "Transport",
+    "GOVERNMENT_AND_NON_PROFIT": "Insurance",
+}
+PLAID_TO_EXPENSE_CATEGORY = {
+    "FOOD_AND_DRINK": "Dining",
+    "GENERAL_MERCHANDISE": "Shopping",
+    "TRANSPORTATION": "Transport",
+    "ENTERTAINMENT": "Entertainment",
+    "MEDICAL": "Health",
+    "TRAVEL": "Travel",
+    "PERSONAL_CARE": "Personal care",
+    "BANK_FEES": "Other",
+}
+
+# Premium status lives on a separate "features" backend (finflowadvisors.com),
+# not in this service. Verify it there on every Plaid call, forwarding a freshly
+# minted token for the same user (both backends share JWT_SECRET, so this is
+# equivalent to forwarding the caller's own token, without needing the raw
+# Request object threaded through every route). Cached briefly per user so we
+# don't hammer the features backend on repeat interactive calls.
+_premium_cache: dict = {}  # user_id -> (expires_at_epoch, is_premium)
+_PREMIUM_CACHE_TTL = 180  # seconds
+
+async def _require_premium(user: dict):
+    uid = user["_id"]
+    now = time.time()
+    cached = _premium_cache.get(uid)
+    if cached and cached[0] > now:
+        if not cached[1]:
+            raise HTTPException(status_code=403, detail="Premium subscription required")
+        return
+    is_premium = False
+    try:
+        token = create_access_token(uid, user["email"])
+        async with httpx.AsyncClient(timeout=6.0) as http:
+            r = await http.get(
+                f"{FEATURES_BACKEND_URL}/api/billing/me",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if r.status_code == 200:
+                is_premium = bool(r.json().get("premium"))
+    except Exception:
+        logger.warning("Premium check against features backend failed", exc_info=True)
+        # fail closed on error -- is_premium stays False; a features-backend
+        # outage must not grant free access to a feature that costs Plaid usage.
+    _premium_cache[uid] = (now + _PREMIUM_CACHE_TTL, is_premium)
+    if not is_premium:
+        raise HTTPException(status_code=403, detail="Premium subscription required")
+
+
+def _plaid_error(e: "plaid.ApiException") -> HTTPException:
+    try:
+        body = json.loads(e.body) if e.body else {}
+    except Exception:
+        body = {}
+    code = body.get("error_code", "unknown_error")
+    logger.warning("Plaid API error: %s", code)
+    return HTTPException(status_code=502, detail=f"Plaid error: {code}")
+
+
+@api_router.post("/plaid/link-token")
+async def plaid_link_token(user: dict = Depends(get_current_user)):
+    await _require_premium(user)
+    req = LinkTokenCreateRequest(
+        user=LinkTokenCreateRequestUser(client_user_id=user["_id"]),
+        client_name="FinFlowAdvisors",
+        products=[Products("transactions")],
+        country_codes=[CountryCode("US")],
+        language="en",
+    )
+    try:
+        resp = await asyncio.to_thread(plaid_client.link_token_create, req)
+    except plaid.ApiException as e:
+        raise _plaid_error(e)
+    return {"link_token": resp.link_token}
+
+
+@api_router.post("/plaid/exchange")
+async def plaid_exchange(data: PlaidExchangeRequest, user: dict = Depends(get_current_user)):
+    await _require_premium(user)
+    req = ItemPublicTokenExchangeRequest(public_token=data.public_token)
+    try:
+        resp = await asyncio.to_thread(plaid_client.item_public_token_exchange, req)
+    except plaid.ApiException as e:
+        raise _plaid_error(e)
+    await db.plaid_items.update_one(
+        {"user_id": user["_id"], "item_id": resp.item_id},
+        {
+            "$set": {
+                "access_token": resp.access_token,
+                "institution_name": data.institution_name,
+                "status": "active",
+            },
+            "$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "user_id": user["_id"],
+                "item_id": resp.item_id,
+                "created_at": datetime.now(timezone.utc),
+            },
+        },
+        upsert=True,
+    )
+    # Frontend triggers the first /plaid/sync itself right after this call --
+    # kept separate so this endpoint stays fast and single-responsibility.
+    return {"item_id": resp.item_id, "institution_name": data.institution_name}
+
+
+@api_router.post("/plaid/sync")
+async def plaid_sync(user: dict = Depends(get_current_user)):
+    await _require_premium(user)
+    uid = user["_id"]
+    items = await db.plaid_items.find({"user_id": uid, "status": {"$in": ["active", "error"]}}).to_list(50)
+    expenses_created = 0
+    bills_upserted = 0
+    removed_count = 0
+
+    for item in items:
+        access_token = item["access_token"]
+
+        # 1) Recurring outflow streams -> bills, upserted idempotently on stream_id.
+        #    Plaid's TransactionStream carries the exact member transaction_ids, so we
+        #    can precisely exclude those from the individual-expense import below
+        #    instead of fuzzy-matching by name/amount.
+        recurring_transaction_ids: set = set()
+        try:
+            rec_resp = await asyncio.to_thread(
+                plaid_client.transactions_recurring_get,
+                TransactionsRecurringGetRequest(access_token=access_token),
+            )
+            for stream in rec_resp.outflow_streams:
+                if not stream.is_active or stream.status == "TOMBSTONED":
+                    continue
+                recurring_transaction_ids.update(stream.transaction_ids or [])
+                primary_cat = (
+                    stream.personal_finance_category.primary if stream.personal_finance_category else None
+                )
+                due_day = stream.last_date.day if stream.last_date else None
+                amt_obj = stream.last_amount or stream.average_amount
+                amount = abs(amt_obj.amount) if amt_obj else 0.0
+                await db.bills.update_one(
+                    {"user_id": uid, "plaid_recurring_id": stream.stream_id},
+                    {
+                        "$set": {
+                            "name": stream.merchant_name or stream.description,
+                            "category": PLAID_TO_BILL_CATEGORY.get(primary_cat, "Other"),
+                            "amount": amount,
+                            "dueDay": due_day,
+                        },
+                        "$setOnInsert": {
+                            "id": str(uuid.uuid4()),
+                            "user_id": uid,
+                            "plaid_recurring_id": stream.stream_id,
+                        },
+                    },
+                    upsert=True,
+                )
+                bills_upserted += 1
+        except plaid.ApiException as e:
+            logger.warning("Plaid recurring-get failed for item %s: %s", item.get("item_id"), e)
+            # Non-fatal -- still import individual transactions below even if
+            # recurring detection fails for this item.
+
+        # 2) Cursor-based transaction sync -> non-recurring outflows become expenses.
+        cursor = item.get("cursor")
+        added, removed = [], []
+        has_more = True
+        try:
+            while has_more:
+                resp = await asyncio.to_thread(
+                    plaid_client.transactions_sync,
+                    TransactionsSyncRequest(access_token=access_token, cursor=cursor),
+                )
+                added += resp.added
+                removed += resp.removed
+                cursor = resp.next_cursor
+                has_more = resp.has_more
+        except plaid.ApiException as e:
+            raise _plaid_error(e)
+
+        for t in added:
+            if t.pending:
+                continue  # import once posted, avoids amount-correction churn
+            if t.amount <= 0:
+                continue  # Plaid convention: positive = outflow; skip inflow/refunds
+            if t.transaction_id in recurring_transaction_ids:
+                continue  # already represented as a bill via its recurring stream
+            if await db.plaid_transactions.find_one(
+                {"user_id": uid, "plaid_transaction_id": t.transaction_id}
+            ):
+                continue
+            primary_cat = t.personal_finance_category.primary if t.personal_finance_category else None
+            expense = {
+                "id": str(uuid.uuid4()),
+                "name": t.merchant_name or t.name,
+                "category": PLAID_TO_EXPENSE_CATEGORY.get(primary_cat, "Other"),
+                "amount": t.amount,
+                "date": t.date.isoformat() if hasattr(t.date, "isoformat") else str(t.date),
+                "recurring": False,
+                "source": "plaid",
+                "user_id": uid,
+            }
+            try:
+                await db.expenses.insert_one(expense)
+                await db.plaid_transactions.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "user_id": uid,
+                    "plaid_item_id": item["item_id"],
+                    "plaid_transaction_id": t.transaction_id,
+                    "target_collection": "expenses",
+                    "target_id": expense["id"],
+                    "amount": t.amount,
+                    "imported_at": datetime.now(timezone.utc),
+                })
+                expenses_created += 1
+            except DuplicateKeyError:
+                # Concurrent sync already imported this transaction -- roll back the
+                # orphaned expense doc inserted just above for it.
+                await db.expenses.delete_one({"id": expense["id"]})
+
+        for t in removed:
+            tracked = await db.plaid_transactions.find_one(
+                {"user_id": uid, "plaid_transaction_id": t.transaction_id}
+            )
+            if tracked and tracked["target_collection"] == "expenses":
+                await db.expenses.delete_one({"id": tracked["target_id"], "user_id": uid})
+                await db.plaid_transactions.delete_one({"id": tracked["id"]})
+                removed_count += 1
+
+        await db.plaid_items.update_one(
+            {"id": item["id"]},
+            {"$set": {"cursor": cursor, "last_synced_at": datetime.now(timezone.utc), "status": "active"}},
+        )
+
+    return {
+        "items_synced": len(items),
+        "expenses_created": expenses_created,
+        "bills_created_or_updated": bills_upserted,
+        "removed": removed_count,
+    }
+
+
+@api_router.get("/plaid/status")
+async def plaid_status(user: dict = Depends(get_current_user)):
+    await _require_premium(user)
+    docs = await db.plaid_items.find(
+        {"user_id": user["_id"]},
+        {"_id": 0, "access_token": 0, "cursor": 0},
+    ).to_list(50)
+    return {"connected": len(docs) > 0, "items": docs}
+
+
+@api_router.delete("/plaid/item/{item_id}")
+async def plaid_disconnect(item_id: str, user: dict = Depends(get_current_user)):
+    await _require_premium(user)
+    item = await db.plaid_items.find_one({"item_id": item_id, "user_id": user["_id"]})
+    if not item:
+        raise HTTPException(status_code=404, detail="Linked account not found")
+    try:
+        await asyncio.to_thread(
+            plaid_client.item_remove,
+            ItemRemoveRequest(access_token=item["access_token"]),
+        )
+    except plaid.ApiException as e:
+        logger.warning("Plaid item_remove failed (proceeding with local cleanup): %s", e)
+    await db.plaid_items.delete_one({"id": item["id"]})
+    # Drop dedup tracking so a future re-link re-imports cleanly instead of silently
+    # skipping transactions as "already seen". Previously-imported bills/expenses are
+    # left in place -- disconnecting unlinks the pipe, it doesn't delete the user's data.
+    await db.plaid_transactions.delete_many({"user_id": user["_id"], "plaid_item_id": item_id})
+    return {"disconnected": True}
+
+
 # ── Investments: Rates, Institutions, Projections, AI Advice ────────
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
@@ -1853,6 +2170,8 @@ logger = logging.getLogger(__name__)
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
+    await db.plaid_transactions.create_index([("user_id", 1), ("plaid_transaction_id", 1)], unique=True)
+    await db.plaid_items.create_index("user_id")
     # seed admin
     ae = os.environ.get("ADMIN_EMAIL", "admin@finflow.com").lower()
     ap = os.environ.get("ADMIN_PASSWORD", "admin123")

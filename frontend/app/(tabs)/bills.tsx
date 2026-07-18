@@ -7,7 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useThemeColors } from '../../src/theme';
-import { getBills, createBill, deleteBill, getSettings } from '../../src/api';
+import {
+  getBills, createBill, deleteBill, getSettings,
+  createPlaidLinkToken, exchangePlaidPublicToken, syncPlaidTransactions,
+  getPlaidStatus, disconnectPlaidItem, PlaidStatus,
+} from '../../src/api';
+import { getBillingMe } from '../../src/featuresApi';
 import { Bill, BILL_CATEGORIES, BILL_CATEGORY_COLORS, Settings } from '../../src/types';
 import { ThemeToggle } from '../../src/components/LogoHeader';
 
@@ -22,6 +27,10 @@ export default function BillsScreen() {
   const [amount, setAmount] = useState('');
   const [dueDay, setDueDay] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  const [plaidStatus, setPlaidStatus] = useState<PlaidStatus | null>(null);
+  const [plaidBusy, setPlaidBusy] = useState(false);
+  const [plaidSyncing, setPlaidSyncing] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -39,6 +48,73 @@ export default function BillsScreen() {
     } finally {
       setLoading(false);
     }
+    // Non-critical: premium/Plaid status shouldn't block the bills list from loading.
+    if (Platform.OS !== 'web') {
+      getBillingMe().then((me) => setIsPremium(!!me.premium)).catch(() => {});
+      getPlaidStatus().then(setPlaidStatus).catch(() => {});
+    }
+  };
+
+  const connectBank = async () => {
+    if (plaidBusy) return;
+    setPlaidBusy(true);
+    try {
+      const { createPlaidLinkSession } = await import('react-native-plaid-link-sdk');
+      const { link_token } = await createPlaidLinkToken();
+      const session = await createPlaidLinkSession({
+        token: link_token,
+        onSuccess: async (success: any) => {
+          setPlaidSyncing(true);
+          try {
+            await exchangePlaidPublicToken(success.publicToken, success.metadata?.institution?.name);
+            await syncPlaidTransactions();
+            await load();
+          } catch (e: any) {
+            Alert.alert('Import failed', e?.message?.slice(0, 160) || 'Could not import transactions.');
+          } finally {
+            setPlaidSyncing(false);
+            setPlaidBusy(false);
+          }
+        },
+        onExit: (exit: any) => {
+          setPlaidBusy(false);
+          if (exit?.error) {
+            Alert.alert('Connection failed', exit.error.errorMessage || 'Please try again.');
+          }
+        },
+        onEvent: () => {},
+      });
+      await session.open();
+    } catch (e: any) {
+      setPlaidBusy(false);
+      Alert.alert('Connection failed', e?.message?.slice(0, 160) || 'Could not start bank connection.');
+    }
+  };
+
+  const syncNow = async () => {
+    if (plaidSyncing) return;
+    setPlaidSyncing(true);
+    try {
+      await syncPlaidTransactions();
+      await load();
+    } catch (e: any) {
+      Alert.alert('Sync failed', e?.message?.slice(0, 160) || 'Could not sync transactions.');
+    } finally {
+      setPlaidSyncing(false);
+    }
+  };
+
+  const disconnectBank = (item_id: string) => {
+    Alert.alert('Disconnect Bank', 'Are you sure? Previously imported bills and expenses will be kept.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect', style: 'destructive',
+        onPress: async () => {
+          await disconnectPlaidItem(item_id);
+          await load();
+        },
+      },
+    ]);
   };
 
   const addBill = async () => {
@@ -118,6 +194,60 @@ export default function BillsScreen() {
               <SummaryItem label="% of Income" value={`${pctOfIncome}%`} color={c.warning} mutedColor={c.textMuted} />
             </View>
           </View>
+
+          {/* Connect Bank (Premium, US only) */}
+          {isPremium && Platform.OS !== 'web' && (
+            plaidStatus?.connected && plaidStatus.items[0] ? (
+              <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Ionicons name="business-outline" size={20} color={c.income} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.itemName, { color: c.textPrimary }]}>
+                      Connected: {plaidStatus.items[0].institution_name || 'Bank account'}
+                    </Text>
+                    <Text style={[styles.itemCategory, { color: c.textMuted }]}>
+                      {plaidStatus.items[0].last_synced_at
+                        ? `Synced ${timeAgo(plaidStatus.items[0].last_synced_at)}`
+                        : 'Not synced yet'}
+                    </Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                  <TouchableOpacity
+                    testID="sync-bank-btn"
+                    onPress={syncNow}
+                    disabled={plaidSyncing}
+                    style={[styles.plaidActionBtn, { backgroundColor: c.income }]}
+                  >
+                    {plaidSyncing
+                      ? <ActivityIndicator color="#fff" size="small" />
+                      : <Text style={styles.plaidActionBtnText}>Sync now</Text>}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    testID="disconnect-bank-btn"
+                    onPress={() => disconnectBank(plaidStatus.items[0].item_id)}
+                    style={[styles.plaidActionBtn, { backgroundColor: c.surfaceSecondary, borderWidth: 0.5, borderColor: c.border }]}
+                  >
+                    <Text style={[styles.plaidActionBtnText, { color: c.expense }]}>Disconnect</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity
+                testID="connect-bank-btn"
+                onPress={connectBank}
+                disabled={plaidBusy}
+                style={[styles.card, styles.plaidConnectCard, { backgroundColor: c.surface, borderColor: c.border }]}
+              >
+                <Ionicons name="business-outline" size={22} color={c.income} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.itemName, { color: c.textPrimary }]}>Connect Bank Account</Text>
+                  <Text style={[styles.itemCategory, { color: c.textMuted }]}>Auto-import bills & expenses (US only)</Text>
+                </View>
+                {plaidBusy ? <ActivityIndicator color={c.income} /> : <Ionicons name="chevron-forward" size={20} color={c.textMuted} />}
+              </TouchableOpacity>
+            )
+          )}
 
           {/* Add Button */}
           <TouchableOpacity
@@ -225,6 +355,16 @@ export default function BillsScreen() {
   );
 }
 
+function timeAgo(iso: string) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 function ordinal(n: number) {
   const s = ['th', 'st', 'nd', 'rd'];
   const v = n % 100;
@@ -250,6 +390,9 @@ const styles = StyleSheet.create({
   summaryItem: { alignItems: 'center', flex: 1 },
   summaryLabel: { fontFamily: 'DMSans_400Regular', fontSize: 12, marginBottom: 4 },
   summaryValue: { fontFamily: 'DMMono_500Medium', fontSize: 18 },
+  plaidConnectCard: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  plaidActionBtn: { flex: 1, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+  plaidActionBtnText: { fontFamily: 'DMSans_600SemiBold', fontSize: 13, color: '#fff' },
   addBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 12, marginBottom: 16, gap: 8 },
   addBtnText: { fontFamily: 'DMSans_600SemiBold', fontSize: 15, color: '#fff' },
   input: { borderRadius: 12, borderWidth: 0.5, padding: 14, fontSize: 16, fontFamily: 'DMSans_400Regular', marginBottom: 12 },
