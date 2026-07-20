@@ -815,8 +815,14 @@ async def ai_advisor_chat(data: AdvisorChatInput, user: dict = Depends(get_curre
             system_message=system_msg,
         ).with_model(ADVISOR_MODEL_PROVIDER, ADVISOR_MODEL_NAME)
 
-        reply = await chat.send_message(UserMessage(text=data.message.strip()))
+        reply = await asyncio.wait_for(
+            chat.send_message(UserMessage(text=data.message.strip())),
+            timeout=25.0,
+        )
         reply_text = str(reply) if reply else "I'm sorry, I couldn't generate a response. Please try again."
+    except asyncio.TimeoutError:
+        logger.warning("AI Advisor timed out for session %s", session_id)
+        raise HTTPException(status_code=504, detail="The AI advisor is taking longer than usual. Please try again.")
     except Exception as e:
         logger.exception("AI Advisor error")
         raise HTTPException(status_code=500, detail=f"AI error: {str(e)[:200]}")
@@ -879,7 +885,7 @@ async def ai_advisor_daily_insight(user: dict = Depends(get_current_user)):
             session_id=f"insight-{user_id}-{today_key}",
             system_message=system_msg,
         ).with_model(ADVISOR_MODEL_PROVIDER, ADVISOR_MODEL_NAME)
-        reply = await chat.send_message(UserMessage(text=prompt))
+        reply = await asyncio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=25.0)
         insight_text = str(reply).strip() if reply else "Track your expenses daily — small leaks sink big ships."
     except Exception as e:
         logger.exception("Insight error")
@@ -1980,7 +1986,7 @@ async def investment_advice(data: AdviceReq, user: dict = Depends(get_current_us
             LlmChat(api_key=emergent_key, session_id=f"invest-advice-{uid}-{country}", system_message=system)
             .with_model("openai", "gpt-4.1-mini")
         )
-        reply = await chat.send_message(UserMessage(text=ctx))
+        reply = await asyncio.wait_for(chat.send_message(UserMessage(text=ctx)), timeout=25.0)
         return {
             "advice": reply.strip() if isinstance(reply, str) else str(reply),
             "bucket": bucket,
