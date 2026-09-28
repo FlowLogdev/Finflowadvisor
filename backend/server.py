@@ -640,13 +640,12 @@ async def get_future_self(user: dict = Depends(get_current_user)):
 
 # ── AI Advisor (LLM-powered personal finance coach) ────────────────
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from openai import AsyncOpenAI
 import httpx
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
-ADVISOR_MODEL_PROVIDER = "openai"
-ADVISOR_MODEL_NAME = "gpt-4.1-mini"  # cost-efficient, high quality for chat
+ADVISOR_MODEL_NAME = os.environ.get("OPENAI_ADVISOR_MODEL", "gpt-4.1-mini")
 
 LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "pt-BR": "Brazilian Portuguese"}
 
@@ -784,10 +783,27 @@ def _lang_directive(lang: Optional[str]) -> str:
         return ""
     return f"\n\nIMPORTANT: Respond in {name}. All of your reply text must be in {name}."
 
+async def _ask_finbot(system_message: str, user_message: str) -> str:
+    """Use the official OpenAI client; keep provider-specific SDKs out of production."""
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=503, detail="AI Advisor is not configured")
+    client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    completion = await client.chat.completions.create(
+        model=ADVISOR_MODEL_NAME,
+        messages=[
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.4,
+        max_tokens=500,
+    )
+    content = completion.choices[0].message.content
+    if not content:
+        raise RuntimeError("AI provider returned an empty response")
+    return content.strip()
+
 @api_router.post("/ai-advisor/chat")
 async def ai_advisor_chat(data: AdvisorChatInput, user: dict = Depends(get_current_user)):
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(status_code=500, detail="AI Advisor not configured")
     if not data.message or not data.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
@@ -809,17 +825,9 @@ async def ai_advisor_chat(data: AdvisorChatInput, user: dict = Depends(get_curre
     system_msg = f"{ADVISOR_SYSTEM_PROMPT}\n\n{financial_ctx}{_lang_directive(data.language)}"
 
     try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=session_id,
-            system_message=system_msg,
-        ).with_model(ADVISOR_MODEL_PROVIDER, ADVISOR_MODEL_NAME)
-
-        reply = await asyncio.wait_for(
-            chat.send_message(UserMessage(text=data.message.strip())),
-            timeout=25.0,
+        reply_text = await asyncio.wait_for(
+            _ask_finbot(system_msg, data.message.strip()), timeout=25.0,
         )
-        reply_text = str(reply) if reply else "I'm sorry, I couldn't generate a response. Please try again."
     except asyncio.TimeoutError:
         logger.warning("AI Advisor timed out for session %s", session_id)
         raise HTTPException(status_code=504, detail="The AI advisor is taking longer than usual. Please try again.")
@@ -861,8 +869,6 @@ async def ai_advisor_clear_history(user: dict = Depends(get_current_user)):
 @api_router.get("/ai-advisor/insight")
 async def ai_advisor_daily_insight(user: dict = Depends(get_current_user)):
     """Generate a short, personalized daily money tip based on user's current data."""
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(status_code=500, detail="AI Advisor not configured")
     user_id = user["_id"]
 
     # Check if we already have today's insight cached
@@ -880,13 +886,7 @@ async def ai_advisor_daily_insight(user: dict = Depends(get_current_user)):
     prompt = f"{financial_ctx}\n\nGenerate today's money tip:"
 
     try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"insight-{user_id}-{today_key}",
-            system_message=system_msg,
-        ).with_model(ADVISOR_MODEL_PROVIDER, ADVISOR_MODEL_NAME)
-        reply = await asyncio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=25.0)
-        insight_text = str(reply).strip() if reply else "Track your expenses daily — small leaks sink big ships."
+        insight_text = await asyncio.wait_for(_ask_finbot(system_msg, prompt), timeout=25.0)
     except Exception as e:
         logger.exception("Insight error")
         # Fallback insight so UI never breaks
@@ -1912,7 +1912,7 @@ class AdviceReq(BaseModel):
 
 @api_router.post("/investments/advice")
 async def investment_advice(data: AdviceReq, user: dict = Depends(get_current_user)):
-    """AI-generated personalized investment advice using Emergent LLM + user's budget context."""
+    """AI-generated personalized investment advice using the configured OpenAI model."""
     uid = user["_id"]
     country = (data.country or "br").lower()
 
@@ -1977,18 +1977,12 @@ async def investment_advice(data: AdviceReq, user: dict = Depends(get_current_us
     )
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        emergent_key = os.environ.get("EMERGENT_LLM_KEY", "")
-        if not emergent_key:
+        if not OPENAI_API_KEY:
             return {"advice": f"Based on your {currency}{monthly_savings}/month savings, we suggest: {bucket}.",
                     "bucket": bucket, "monthly_savings": monthly_savings, "fallback": True}
-        chat = (
-            LlmChat(api_key=emergent_key, session_id=f"invest-advice-{uid}-{country}", system_message=system)
-            .with_model("openai", "gpt-4.1-mini")
-        )
-        reply = await asyncio.wait_for(chat.send_message(UserMessage(text=ctx)), timeout=25.0)
+        reply = await asyncio.wait_for(_ask_finbot(system, ctx), timeout=25.0)
         return {
-            "advice": reply.strip() if isinstance(reply, str) else str(reply),
+            "advice": reply,
             "bucket": bucket,
             "monthly_savings": monthly_savings,
             "currency": currency,

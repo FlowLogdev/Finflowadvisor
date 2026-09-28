@@ -20,7 +20,7 @@ DB_NAME=<database name>
 JWT_SECRET=<secret>
 ADMIN_EMAIL=<admin email>
 ADMIN_PASSWORD=<admin password>
-EMERGENT_LLM_KEY=<key for AI advisor via emergentintegrations>
+OPENAI_API_KEY=<key for the OpenAI-powered advisor>
 FINNHUB_API_KEY=<key for stock quotes>
 FRED_API_KEY=<key for US interest rate data>
 ```
@@ -83,7 +83,7 @@ All backend code lives in a single FastAPI file. Routes are mounted under `/api`
 
 **Auth**: JWT tokens (access 24h, refresh 7d). All protected routes use `Depends(get_current_user)`. Token is sent as `Authorization: Bearer <token>` header. Admin routes additionally call `_require_admin()`.
 
-**AI Advisor**: Uses `emergentintegrations` (`LlmChat`) with `openai/gpt-4.1-mini`. Financial context is built fresh on each request from the user's live DB data and injected into the system prompt.
+**AI Advisor**: Uses the official OpenAI client with `gpt-4.1-mini` by default. Financial context is built fresh on each request from the user's live DB data and injected into the system prompt.
 
 **External APIs**:
 - FX rates: Frankfurter.dev (free, no key)
