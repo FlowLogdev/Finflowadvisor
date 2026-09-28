@@ -18,9 +18,8 @@ retiring the old host.
 1. Create a Supabase project and apply the migration. Keep `anon` and
    `authenticated` blocked from the application tables; the API uses a
    server-only service credential during the transition.
-2. Export the old Mongo collections, validate user counts and balances, and
-   transform their ObjectId `user_id` values before importing. There is no
-   Mongo connection string in this checkout, so this cannot be inferred.
+2. This is a clean launch: do not import the old Mongo collections or preserve
+   legacy custom-JWT accounts. Create new Supabase Auth users after cutover.
 3. Create/link the Vercel project from this repository. Add the server secrets
    to both Preview and Production; add mobile `EXPO_PUBLIC_*` values only to
    the Expo/EAS build environment.
@@ -30,9 +29,9 @@ retiring the old host.
    iOS builds cannot be redirected to a different origin without preserving the
    current domain or shipping a new App Store build.
 
-## Important migration boundary
+## Important clean-start boundary
 
 The current running FastAPI code uses MongoDB and custom HS256 JWTs. The SQL
-schema is deliberately prepared separately: replacing its database adapter and
-auth verifier before a tested export/import would destroy continuity for current
-users. Do not set a Supabase service key in the Expo client.
+schema is deliberately prepared separately. There are no customers to migrate,
+so Supabase Auth can become the new source of identity during the backend
+rewrite. Do not set a Supabase service key in the Expo client.
