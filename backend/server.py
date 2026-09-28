@@ -2169,7 +2169,17 @@ async def admin_close_ticket(ticket_number: str, user: dict = Depends(get_curren
 # ── App setup ───────────────────────────────────────────────────────
 
 app.include_router(api_router)
-app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Native mobile requests do not carry an Origin header. Browser origins do, so
+# never combine credentialed CORS with a wildcard origin in production.
+allowed_origins = [origin.strip() for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -2178,9 +2188,13 @@ async def startup():
     await db.users.create_index("email", unique=True)
     await db.plaid_transactions.create_index([("user_id", 1), ("plaid_transaction_id", 1)], unique=True)
     await db.plaid_items.create_index("user_id")
-    # seed admin
-    ae = os.environ.get("ADMIN_EMAIL", "admin@finflow.com").lower()
-    ap = os.environ.get("ADMIN_PASSWORD", "admin123")
+    # An administrator must be explicitly configured. Seeding a known default
+    # password on every deployment made the previous host publicly compromiseable.
+    ae = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+    ap = os.environ.get("ADMIN_PASSWORD", "")
+    if not ae or not ap:
+        logger.warning("Admin seeding skipped: ADMIN_EMAIL and ADMIN_PASSWORD are required")
+        return
     ex = await db.users.find_one({"email": ae})
     if not ex:
         r = await db.users.insert_one({"name": "Admin", "email": ae, "password_hash": hash_password(ap), "role": "admin", "created_at": datetime.now(timezone.utc)})

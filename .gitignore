@@ -88,6 +88,11 @@ credentials.json
 *.pem
 *.key
 .credentials
+!.env.example
+
+# Versioned deployment template and Supabase's local CLI cache.
+!.env.example
+/supabase/.temp/
 -e 
 # Environment and credential files
 .env
@@ -97,3 +102,4 @@ credentials.json
 *.pem
 *.key
 .credentials
+!.env.example

@@ -113,7 +113,7 @@ export default function GraveyardScreen() {
                   {cur}{data?.total_waste_monthly.toLocaleString()}/mo wasted
                 </Text>
                 <Text style={[styles.wasteDesc, { color: c.textMuted }]}>
-                  That's {cur}{data?.total_waste_annual.toLocaleString()}/year on subs you don't use
+                  That&apos;s {cur}{data?.total_waste_annual.toLocaleString()}/year on subs you don&apos;t use
                 </Text>
               </View>
             </View>
@@ -137,7 +137,7 @@ export default function GraveyardScreen() {
         {active.length === 0 ? (
           <View style={[styles.emptyCard, { backgroundColor: c.surface, borderColor: c.border }]}>
             <Text style={[styles.emptyText, { color: c.textMuted }]}>
-              No subscriptions found.{'\n'}Add bills under the "Subscriptions" category or mark expenses as recurring.
+              No subscriptions found.{'\n'}Add bills under the &quot;Subscriptions&quot; category or mark expenses as recurring.
             </Text>
           </View>
         ) : (

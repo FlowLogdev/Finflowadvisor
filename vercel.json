@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "backend/server.py": {
+      "excludeFiles": "{frontend/**,test_reports/**,tests/**,backend/tests/**,**/__pycache__/**,memory/**}"
+    }
+  }
+}

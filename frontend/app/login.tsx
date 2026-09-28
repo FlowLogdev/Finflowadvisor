@@ -94,7 +94,7 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           <View style={styles.switchRow}>
-            <Text style={[styles.switchText, { color: c.textMuted }]}>Don't have an account?</Text>
+            <Text style={[styles.switchText, { color: c.textMuted }]}>Don&apos;t have an account?</Text>
             <TouchableOpacity testID="goto-register-btn" onPress={() => router.replace('/register')}>
               <Text style={[styles.switchLink, { color: c.income }]}> Sign Up</Text>
             </TouchableOpacity>

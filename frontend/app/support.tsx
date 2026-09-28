@@ -92,7 +92,7 @@ export default function SupportScreen() {
           <Field c={c} label="Email" value={email} onChange={setEmail} placeholder="you@email.com" keyboard="email-address" />
           <Field c={c} label="Phone (optional)" value={phone} onChange={setPhone} placeholder="+1 555 555 5555" keyboard="phone-pad" />
           <View style={{ marginBottom: 14 }}>
-            <Text style={[styles.fieldLabel, { color: c.textPrimary }]}>What's going on?</Text>
+            <Text style={[styles.fieldLabel, { color: c.textPrimary }]}>What&apos;s going on?</Text>
             <TextInput
               value={description}
               onChangeText={setDescription}

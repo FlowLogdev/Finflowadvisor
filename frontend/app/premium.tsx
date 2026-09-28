@@ -248,7 +248,7 @@ export default function PremiumScreen() {
           <View style={[styles.premiumBadge, { backgroundColor: c.income }]}>
             <Ionicons name="checkmark-circle" size={28} color="#fff" />
             <View style={{ flex: 1 }}>
-              <Text style={styles.premiumBadgeTitle}>You're Premium ✨</Text>
+              <Text style={styles.premiumBadgeTitle}>You&apos;re Premium ✨</Text>
               {premiumUntil && (
                 <Text style={styles.premiumBadgeSub}>
                   Renews {new Date(premiumUntil).toLocaleDateString()}
@@ -386,7 +386,7 @@ export default function PremiumScreen() {
           </Text>
         )}
 
-        <Text style={[styles.sectionTitle, { color: c.textPrimary }]}>What's included</Text>
+        <Text style={[styles.sectionTitle, { color: c.textPrimary }]}>What&apos;s included</Text>
         <View style={[styles.benefitsCard, { backgroundColor: c.surface, borderColor: c.border }]}>
           {BENEFITS.map((b) => (
             <View key={b} style={styles.benefitRow}>

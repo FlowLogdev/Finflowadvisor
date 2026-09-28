@@ -457,7 +457,7 @@ export default function InvestmentsScreen() {
               />
             )) : (
               <Text style={[styles.muted, { color: c.textMuted, paddingVertical: 20, textAlign: 'center' }]}>
-                Couldn't load institutions. Pull down to retry.
+                Couldn&apos;t load institutions. Pull down to retry.
               </Text>
             )}
 
