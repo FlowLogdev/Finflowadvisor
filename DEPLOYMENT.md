@@ -31,7 +31,7 @@ retiring the old host.
 
 ## Important clean-start boundary
 
-The current running FastAPI code uses MongoDB and custom HS256 JWTs. The SQL
+The Supabase migration replaces MongoDB and custom HS256 JWTs. The SQL
 schema is deliberately prepared separately. There are no customers to migrate,
 so Supabase Auth can become the new source of identity during the backend
 rewrite. Do not set a Supabase service key in the Expo client.

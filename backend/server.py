@@ -5,35 +5,18 @@ load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-from bson import ObjectId
-import os, logging, uuid, bcrypt, jwt, time, asyncio
+from supabase_store import SupabaseStore
+import os, logging, uuid, time, asyncio
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
-JWT_SECRET = os.environ['JWT_SECRET']
-JWT_ALG = "HS256"
+db = SupabaseStore()
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
 # ── Auth Helpers ────────────────────────────────────────────────────
-
-def hash_password(pw: str) -> str:
-    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
-
-def verify_password(pw: str, hashed: str) -> bool:
-    return bcrypt.checkpw(pw.encode(), hashed.encode())
-
-def create_access_token(uid: str, email: str) -> str:
-    return jwt.encode({"sub": uid, "email": email, "exp": datetime.now(timezone.utc) + timedelta(hours=24), "type": "access"}, JWT_SECRET, algorithm=JWT_ALG)
-
-def create_refresh_token(uid: str) -> str:
-    return jwt.encode({"sub": uid, "exp": datetime.now(timezone.utc) + timedelta(days=7), "type": "refresh"}, JWT_SECRET, algorithm=JWT_ALG)
 
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
@@ -43,20 +26,11 @@ async def get_current_user(request: Request) -> dict:
             token = auth[7:]
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
-        if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        user["_id"] = str(user["_id"])
-        user.pop("password_hash", None)
-        return user
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except (jwt.InvalidTokenError, Exception):
-        raise HTTPException(status_code=401, detail="Invalid token")
+    user = await db.current_user(token)
+    # Internal feature checks may need to call another API route as this user.
+    # Keep the token only in this request-local object; it is never serialized.
+    user["_access_token"] = token
+    return user
 
 # ── Auth Models ─────────────────────────────────────────────────────
 
@@ -74,31 +48,24 @@ class LoginInput(BaseModel):
 @api_router.post("/auth/register")
 async def register(data: RegisterInput):
     email = data.email.strip().lower()
-    if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
-    user_doc = {
-        "name": data.name.strip(), "email": email,
-        "password_hash": hash_password(data.password),
-        "role": "user", "created_at": datetime.now(timezone.utc),
-    }
-    result = await db.users.insert_one(user_doc)
-    uid = str(result.inserted_id)
-    # create default settings for new user
-    await db.settings.insert_one({"user_id": uid, "salary": 5000, "currency": "$", "pctNeeds": 50, "pctWants": 30, "pctSavings": 20})
-    at = create_access_token(uid, email)
-    rt = create_refresh_token(uid)
-    return {"user": {"id": uid, "name": data.name.strip(), "email": email, "role": "user"}, "access_token": at, "refresh_token": rt}
+    try:
+        user = await db.create_user(email, data.password, data.name.strip())
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        raise
+    session = await db.session_for_password(email, data.password)
+    return {"user": {"id": user["_id"], "name": user["name"], "email": email, "role": user["role"]}, "access_token": session["access_token"], "refresh_token": session["refresh_token"]}
 
 @api_router.post("/auth/login")
 async def login(data: LoginInput):
     email = data.email.strip().lower()
-    user = await db.users.find_one({"email": email})
-    if not user or not verify_password(data.password, user["password_hash"]):
+    try:
+        session = await db.session_for_password(email, data.password)
+        user = await db.current_user(session["access_token"])
+    except HTTPException:
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    uid = str(user["_id"])
-    at = create_access_token(uid, email)
-    rt = create_refresh_token(uid)
-    return {"user": {"id": uid, "name": user["name"], "email": email, "role": user.get("role", "user")}, "access_token": at, "refresh_token": rt}
+    return {"user": {"id": user["_id"], "name": user["name"], "email": email, "role": user.get("role", "user")}, "access_token": session["access_token"], "refresh_token": session["refresh_token"]}
 
 @api_router.get("/auth/me")
 async def get_me(user: dict = Depends(get_current_user)):
@@ -113,26 +80,15 @@ async def refresh_token(request: Request):
     if not token:
         raise HTTPException(status_code=401, detail="No refresh token")
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
-        if payload.get("type") != "refresh":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        uid = str(user["_id"])
-        at = create_access_token(uid, user["email"])
-        return {"access_token": at}
-    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        session = await db.refresh(token)
+        return {"access_token": session["access_token"]}
+    except HTTPException:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 @api_router.delete("/auth/account")
 async def delete_account(user: dict = Depends(get_current_user)):
     uid = user["_id"]
-    collections = ["settings", "bills", "expenses", "savings_goals",
-                   "ai_messages", "ai_insights", "watchlist", "support_tickets"]
-    for col in collections:
-        await db[col].delete_many({"user_id": uid})
-    await db.users.delete_one({"_id": ObjectId(uid)})
+    await db.users.delete_one({"_id": uid})
     return {"success": True}
 
 # ── Data Models ─────────────────────────────────────────────────────
@@ -385,7 +341,11 @@ async def reset_all_data(user: dict = Depends(get_current_user)):
 
 @api_router.get("/health")
 async def health():
-    return {"status": "healthy"}
+    if not db.configured:
+        raise HTTPException(status_code=503, detail="Supabase configuration is missing")
+    # Exercise PostgREST rather than reporting healthy solely because variables exist.
+    await db.settings.find_one({}, {"user_id": 1})
+    return {"status": "healthy", "database": "supabase"}
 
 # ── Financial Immune System Score ──────────────────────────────────
 
@@ -510,7 +470,7 @@ async def get_subscription_graveyard(user: dict = Depends(get_current_user)):
         {"_id": 0, "user_id": 0}
     ).to_list(1000)
 
-    user_doc = await db.users.find_one({"_id": ObjectId(uid)}, {"created_at": 1})
+    user_doc = await db.users.find_one({"_id": uid}, {"created_at": 1})
     created_at = user_doc.get("created_at", datetime.now(timezone.utc)) if user_doc else datetime.now(timezone.utc)
     months_active = max(1, (datetime.now(timezone.utc) - created_at).days // 30)
 
@@ -1372,7 +1332,6 @@ async def remove_watchlist(symbol: str, user: dict = Depends(get_current_user)):
 # ── Plaid (Bank Account Sync, US only, Premium) ──────────────────────
 
 import json
-from pymongo.errors import DuplicateKeyError
 import plaid
 from plaid.api import plaid_api
 from plaid.model.products import Products
@@ -1428,12 +1387,8 @@ PLAID_TO_EXPENSE_CATEGORY = {
     "BANK_FEES": "Other",
 }
 
-# Premium status lives on a separate "features" backend (finflowadvisors.com),
-# not in this service. Verify it there on every Plaid call, forwarding a freshly
-# minted token for the same user (both backends share JWT_SECRET, so this is
-# equivalent to forwarding the caller's own token, without needing the raw
-# Request object threaded through every route). Cached briefly per user so we
-# don't hammer the features backend on repeat interactive calls.
+# Premium status is checked by the same deployed API. Cache it briefly so
+# repeat interactive calls do not trigger a billing request each time.
 _premium_cache: dict = {}  # user_id -> (expires_at_epoch, is_premium)
 _PREMIUM_CACHE_TTL = 180  # seconds
 
@@ -1447,11 +1402,10 @@ async def _require_premium(user: dict):
         return
     is_premium = False
     try:
-        token = create_access_token(uid, user["email"])
         async with httpx.AsyncClient(timeout=6.0) as http:
             r = await http.get(
                 f"{FEATURES_BACKEND_URL}/api/billing/me",
-                headers={"Authorization": f"Bearer {token}"},
+                headers={"Authorization": f"Bearer {user['_access_token']}"},
             )
             if r.status_code == 200:
                 is_premium = bool(r.json().get("premium"))
@@ -1628,7 +1582,9 @@ async def plaid_sync(user: dict = Depends(get_current_user)):
                     "imported_at": datetime.now(timezone.utc),
                 })
                 expenses_created += 1
-            except DuplicateKeyError:
+            except HTTPException as exc:
+                if exc.status_code != 409:
+                    raise
                 # Concurrent sync already imported this transaction -- roll back the
                 # orphaned expense doc inserted just above for it.
                 await db.expenses.delete_one({"id": expense["id"]})
@@ -2101,6 +2057,8 @@ async def submit_support_ticket(data: TicketIn):
         "email": data.email.strip().lower(),
         "phone": (data.phone or "").strip(),
         "description": data.description.strip()[:4000],
+        "subject": "Support request",
+        "message": data.description.strip()[:4000],
         "status": "open",
         "replies": [],
         "created_at": now,
@@ -2179,9 +2137,6 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def startup():
-    await db.users.create_index("email", unique=True)
-    await db.plaid_transactions.create_index([("user_id", 1), ("plaid_transaction_id", 1)], unique=True)
-    await db.plaid_items.create_index("user_id")
     # An administrator must be explicitly configured. Seeding a known default
     # password on every deployment made the previous host publicly compromiseable.
     ae = os.environ.get("ADMIN_EMAIL", "").strip().lower()
@@ -2189,14 +2144,5 @@ async def startup():
     if not ae or not ap:
         logger.warning("Admin seeding skipped: ADMIN_EMAIL and ADMIN_PASSWORD are required")
         return
-    ex = await db.users.find_one({"email": ae})
-    if not ex:
-        r = await db.users.insert_one({"name": "Admin", "email": ae, "password_hash": hash_password(ap), "role": "admin", "created_at": datetime.now(timezone.utc)})
-        await db.settings.insert_one({"user_id": str(r.inserted_id), "salary": 5000, "currency": "$", "pctNeeds": 50, "pctWants": 30, "pctSavings": 20})
-    elif not verify_password(ap, ex["password_hash"]):
-        await db.users.update_one({"email": ae}, {"$set": {"password_hash": hash_password(ap)}})
+    await db.ensure_admin(ae, ap)
     logger.info("Admin seeded")
-
-@app.on_event("shutdown")
-async def shutdown():
-    client.close()
