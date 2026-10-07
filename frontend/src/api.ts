@@ -1,9 +1,7 @@
 import { getToken } from './auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const BASE_URL = typeof window !== 'undefined'
-  ? window.location.origin
-  : (process.env.EXPO_PUBLIC_BACKEND_URL || "https://www.finflowadvisors.com");
+const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL || "https://finflowadvisors.com";
 
 async function resolveToken(): Promise<string | null> {
   // Prefer in-memory (fast path after login)
