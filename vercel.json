@@ -3,6 +3,12 @@
   "installCommand": "pip install -r requirements.txt && cd frontend && npm ci",
   "buildCommand": "cd frontend && npx expo export --platform web --output-dir ../public",
   "outputDirectory": "public",
+  "routes": [
+    { "src": "/api", "dest": "/api/index.py" },
+    { "src": "/api/(.*)", "dest": "/api/index.py" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ],
   "functions": {
     "api/index.py": {
       "excludeFiles": "{frontend/**,test_reports/**,tests/**,backend/tests/**,**/__pycache__/**,memory/**}"
