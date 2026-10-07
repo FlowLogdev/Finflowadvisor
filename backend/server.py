@@ -6,6 +6,7 @@ load_dotenv(ROOT_DIR / '.env')
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 # Vercel loads this file as the function entrypoint from the repository root,
 # so import the compatibility layer through the backend namespace rather than
 # relying on the function directory being added to sys.path.
@@ -2143,17 +2144,31 @@ class ExpoStaticFiles(StaticFiles):
     """
 
     async def get_response(self, path: str, scope):
-        response = await super().get_response(path, scope)
-        if response.status_code != 404 or path.startswith("api/"):
+        async def response_or_none(candidate: str):
+            try:
+                return await super(ExpoStaticFiles, self).get_response(candidate, scope)
+            except StarletteHTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                return None
+
+        response = await response_or_none(path)
+        if response is not None:
             return response
+
+        if path.startswith("api/"):
+            raise StarletteHTTPException(status_code=404)
 
         route_name = Path(path).name
         if path and "." not in route_name:
-            response = await super().get_response(f"{path}.html", scope)
-            if response.status_code != 404:
+            response = await response_or_none(f"{path}.html")
+            if response is not None:
                 return response
 
-        return await super().get_response("index.html", scope)
+        response = await response_or_none("index.html")
+        if response is None:
+            raise StarletteHTTPException(status_code=404)
+        return response
 
 
 if WEB_EXPORT_DIR.is_dir():
