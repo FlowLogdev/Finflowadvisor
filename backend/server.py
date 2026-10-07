@@ -2130,8 +2130,34 @@ app.include_router(api_router)
 # the Expo web export with the function so browser requests are served here,
 # while the API router above continues to own /api/* for the iOS build.
 WEB_EXPORT_DIR = ROOT_DIR / "static"
+
+
+class ExpoStaticFiles(StaticFiles):
+    """Serve Expo's exported ``route.html`` files at their route URLs.
+
+    Expo Router emits ``landing.html``, ``login.html``, etc.  A normal
+    ``StaticFiles(html=True)`` mount only recognizes directory indexes, so a
+    browser redirect to ``/landing`` used to become a 404 on a hard refresh.
+    Keep API failures as API failures, then try the exported HTML page and
+    finally the SPA entry point for ordinary web routes.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code != 404 or path.startswith("api/"):
+            return response
+
+        route_name = Path(path).name
+        if path and "." not in route_name:
+            response = await super().get_response(f"{path}.html", scope)
+            if response.status_code != 404:
+                return response
+
+        return await super().get_response("index.html", scope)
+
+
 if WEB_EXPORT_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(WEB_EXPORT_DIR), html=True), name="web")
+    app.mount("/", ExpoStaticFiles(directory=str(WEB_EXPORT_DIR), html=True), name="web")
 
 # Native mobile requests do not carry an Origin header. Browser origins do, so
 # never combine credentialed CORS with a wildcard origin in production.
