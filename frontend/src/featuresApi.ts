@@ -4,7 +4,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from './auth';
 
-const FEATURES_BASE = process.env.EXPO_PUBLIC_FEATURES_BACKEND || 'https://finflowadvisors.com';
+const FEATURES_BASE = typeof window !== 'undefined'
+  ? window.location.origin
+  : (process.env.EXPO_PUBLIC_FEATURES_BACKEND || 'https://www.finflowadvisors.com');
 
 async function resolveToken(): Promise<string | null> {
   const t = getToken();
