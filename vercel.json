@@ -1,10 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "cd frontend && npm ci",
+  "installCommand": "pip install -r requirements.txt && cd frontend && npm ci",
   "buildCommand": "cd frontend && npx expo export --platform web --output-dir ../public",
   "outputDirectory": "public",
   "functions": {
-    "backend/server.py": {
+    "api/index.py": {
       "excludeFiles": "{frontend/**,test_reports/**,tests/**,backend/tests/**,**/__pycache__/**,memory/**}"
     }
   }
