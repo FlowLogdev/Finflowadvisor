@@ -4,6 +4,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 # Vercel loads this file as the function entrypoint from the repository root,
 # so import the compatibility layer through the backend namespace rather than
@@ -2124,6 +2125,13 @@ async def admin_close_ticket(ticket_number: str, user: dict = Depends(get_curren
 # ── App setup ───────────────────────────────────────────────────────
 
 app.include_router(api_router)
+
+# The Vercel Python runtime owns the root route for this deployment. Package
+# the Expo web export with the function so browser requests are served here,
+# while the API router above continues to own /api/* for the iOS build.
+WEB_EXPORT_DIR = ROOT_DIR / "static"
+if WEB_EXPORT_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(WEB_EXPORT_DIR), html=True), name="web")
 
 # Native mobile requests do not carry an Origin header. Browser origins do, so
 # never combine credentialed CORS with a wildcard origin in production.
