@@ -2160,6 +2160,12 @@ class ExpoStaticFiles(StaticFiles):
             raise StarletteHTTPException(status_code=404)
 
         route_name = Path(path).name
+        # A missing JavaScript, font, or image must remain a 404. Returning the
+        # SPA HTML for it makes a stale cached shell execute HTML as JavaScript
+        # ("Unexpected token '<'") and leaves the page blank.
+        if "." in route_name:
+            raise StarletteHTTPException(status_code=404)
+
         if path and "." not in route_name:
             response = await response_or_none(f"{path}.html")
             if response is not None:
@@ -2173,6 +2179,17 @@ class ExpoStaticFiles(StaticFiles):
 
 if WEB_EXPORT_DIR.is_dir():
     app.mount("/", ExpoStaticFiles(directory=str(WEB_EXPORT_DIR), html=True), name="web")
+
+
+@app.middleware("http")
+async def prevent_stale_web_shell(request: Request, call_next):
+    """Always revalidate HTML/routes while allowing hashed assets to cache."""
+    response = await call_next(request)
+    path = request.url.path.rstrip("/")
+    last_segment = path.rsplit("/", 1)[-1]
+    if not path or "." not in last_segment:
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 # Native mobile requests do not carry an Origin header. Browser origins do, so
 # never combine credentialed CORS with a wildcard origin in production.
