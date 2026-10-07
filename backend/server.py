@@ -5,7 +5,10 @@ load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
 from starlette.middleware.cors import CORSMiddleware
-from supabase_store import SupabaseStore
+# Vercel loads this file as the function entrypoint from the repository root,
+# so import the compatibility layer through the backend namespace rather than
+# relying on the function directory being added to sys.path.
+from backend.supabase_store import SupabaseStore
 import os, logging, uuid, time, asyncio
 from pydantic import BaseModel, Field
 from typing import Optional
