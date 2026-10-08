@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const BASE_URL = typeof window !== 'undefined'
   ? window.location.origin
   : (process.env.EXPO_PUBLIC_BACKEND_URL || 'https://www.finflowadvisors.com');
+const API_TIMEOUT_MS = 12_000;
 
 async function resolveToken(): Promise<string | null> {
   // Prefer in-memory (fast path after login)
@@ -21,12 +22,21 @@ async function api<T = any>(path: string, options?: RequestInit): Promise<T> {
   const token = await resolveToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${BASE_URL}${path}`, { headers, ...options });
-  if (!res.ok) {
-    const msg = await res.text().catch(() => 'Unknown error');
-    throw new Error(`API ${res.status}: ${msg}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, signal: controller.signal });
+    if (!res.ok) {
+      const msg = await res.text().catch(() => 'Unknown error');
+      throw new Error(`API ${res.status}: ${msg}`);
+    }
+    return res.json();
+  } catch (error: any) {
+    if (error?.name === 'AbortError') throw new Error('The request timed out. Please try again.');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json();
 }
 
 export const getSettings = () => api('/api/settings');

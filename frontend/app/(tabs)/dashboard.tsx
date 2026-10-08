@@ -29,6 +29,7 @@ export default function DashboardScreen() {
   const { logout } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [immuneScore, setImmuneScore] = useState<ImmuneScoreResponse | null>(null);
@@ -44,11 +45,14 @@ export default function DashboardScreen() {
   );
 
   const load = async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
       const d = await getDashboard();
       setData(d);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setLoadError(e?.message || 'Could not load your dashboard.');
     } finally {
       setLoading(false);
     }
@@ -83,23 +87,25 @@ export default function DashboardScreen() {
   };
 
   const updateGoalSaved = async (goal: SavingsGoal) => {
-    Alert.prompt?.(
-      'Update Saved Amount',
-      `Current: ${cur}${goal.saved}`,
-      async (text: string) => {
-        const val = parseFloat(text);
-        if (isNaN(val)) return;
-        const updated = await updateSavingsGoal(goal.id, { saved: val });
-        setData((prev) =>
-          prev ? {
+    if (Platform.OS === 'ios' && typeof Alert.prompt === 'function') {
+      Alert.prompt(
+        'Update Saved Amount',
+        `Current: ${cur}${goal.saved}`,
+        async (text: string) => {
+          const val = parseFloat(text);
+          if (isNaN(val)) return;
+          const updated = await updateSavingsGoal(goal.id, { saved: val });
+          setData((prev) => prev ? {
             ...prev,
             savings_goals: prev.savings_goals.map((g) => (g.id === goal.id ? updated : g)),
-          } : prev
-        );
-      },
-      'plain-text',
-      String(goal.saved),
-    ) || Alert.alert('Update Saved', 'Tap the amount to edit (iOS only for prompt). Use the form to update.');
+          } : prev);
+        },
+        'plain-text',
+        String(goal.saved),
+      );
+    } else {
+      Alert.alert('Update Saved', 'Use the form to update your savings goal.');
+    }
   };
 
   const removeGoal = async (id: string) => {
@@ -107,10 +113,22 @@ export default function DashboardScreen() {
     setData((prev) => prev ? { ...prev, savings_goals: prev.savings_goals.filter((g) => g.id !== id) } : prev);
   };
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <SafeAreaView style={[styles.center, { backgroundColor: c.background }]}>
         <ActivityIndicator size="large" color={c.income} />
+      </SafeAreaView>
+    );
+  }
+
+  if (!data) {
+    return (
+      <SafeAreaView style={[styles.center, { backgroundColor: c.background }]}>
+        <Text style={[styles.loadErrorTitle, { color: c.textPrimary }]}>Dashboard unavailable</Text>
+        <Text style={[styles.loadErrorText, { color: c.textMuted }]}>{loadError || 'Please try again.'}</Text>
+        <TouchableOpacity onPress={load} style={[styles.retryButton, { backgroundColor: c.income }]}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
       </SafeAreaView>
     );
   }
@@ -552,6 +570,10 @@ function WaterfallBar({ label, amount, maxAmount, color, cur, c }: {
 
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadErrorTitle: { fontFamily: 'DMSans_700Bold', fontSize: 18, marginBottom: 8 },
+  loadErrorText: { fontFamily: 'DMSans_400Regular', fontSize: 14, textAlign: 'center', maxWidth: 300 },
+  retryButton: { marginTop: 18, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 10 },
+  retryButtonText: { color: '#fff', fontFamily: 'DMSans_600SemiBold', fontSize: 14 },
   scroll: { padding: 24, paddingBottom: 48 },
   title: { fontFamily: 'DMSans_700Bold', fontSize: 32, lineHeight: 40, marginBottom: 4 },
   subtitle: { fontFamily: 'DMSans_400Regular', fontSize: 16, lineHeight: 24, marginBottom: 24 },

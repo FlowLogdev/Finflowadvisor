@@ -241,12 +241,16 @@ EXP_CAT_COLORS = {'Dining':'#FF6B6B','Groceries':'#50C878','Shopping':'#9B59B6',
 @api_router.get("/dashboard")
 async def get_dashboard(user: dict = Depends(get_current_user)):
     uid = user["_id"]
-    settings = await db.settings.find_one({"user_id": uid}, {"_id": 0, "user_id": 0})
+    # These are independent PostgREST requests. Running them one after another
+    # made the first dashboard paint wait for four separate network round trips.
+    settings, bills, expenses, goals = await asyncio.gather(
+        db.settings.find_one({"user_id": uid}, {"_id": 0, "user_id": 0}),
+        db.bills.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000),
+        db.expenses.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000),
+        db.savings_goals.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000),
+    )
     if not settings:
         settings = Settings().model_dump()
-    bills = await db.bills.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
-    expenses = await db.expenses.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
-    goals = await db.savings_goals.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(1000)
 
     tb = sum(b["amount"] for b in bills)
     te = sum(e["amount"] for e in expenses)
@@ -1351,6 +1355,8 @@ from plaid.model.item_remove_request import ItemRemoveRequest
 PLAID_CLIENT_ID = os.environ.get("PLAID_CLIENT_ID", "")
 PLAID_SECRET = os.environ.get("PLAID_SECRET", "")
 PLAID_ENV = os.environ.get("PLAID_ENV", "sandbox")  # sandbox | production
+PLAID_REDIRECT_URI = os.environ.get("PLAID_REDIRECT_URI", "").strip()
+PLAID_WEBHOOK_URL = os.environ.get("PLAID_WEBHOOK_URL", "").strip()
 FEATURES_BACKEND_URL = os.environ.get("FEATURES_BACKEND_URL", "https://finflowadvisors.com").rstrip("/")
 
 _plaid_configuration = plaid.Configuration(
@@ -1398,6 +1404,10 @@ _premium_cache: dict = {}  # user_id -> (expires_at_epoch, is_premium)
 _PREMIUM_CACHE_TTL = 180  # seconds
 
 async def _require_premium(user: dict):
+    # Support admins can validate premium-only integrations without a separate
+    # subscription. This is role-based and grants nothing to ordinary accounts.
+    if user.get("role") == "admin":
+        return
     uid = user["_id"]
     now = time.time()
     cached = _premium_cache.get(uid)
@@ -1436,12 +1446,20 @@ def _plaid_error(e: "plaid.ApiException") -> HTTPException:
 @api_router.post("/plaid/link-token")
 async def plaid_link_token(user: dict = Depends(get_current_user)):
     await _require_premium(user)
+    if not PLAID_CLIENT_ID or not PLAID_SECRET:
+        raise HTTPException(status_code=503, detail="Plaid is not configured yet")
+    link_options = {}
+    if PLAID_REDIRECT_URI:
+        link_options["redirect_uri"] = PLAID_REDIRECT_URI
+    if PLAID_WEBHOOK_URL:
+        link_options["webhook"] = PLAID_WEBHOOK_URL
     req = LinkTokenCreateRequest(
         user=LinkTokenCreateRequestUser(client_user_id=user["_id"]),
         client_name="FinFlowAdvisors",
         products=[Products("transactions")],
         country_codes=[CountryCode("US")],
         language="en",
+        **link_options,
     )
     try:
         resp = await asyncio.to_thread(plaid_client.link_token_create, req)

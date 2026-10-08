@@ -15,9 +15,12 @@ import {
 import { getBillingMe } from '../../src/featuresApi';
 import { Bill, BILL_CATEGORIES, BILL_CATEGORY_COLORS, Settings } from '../../src/types';
 import { ThemeToggle } from '../../src/components/LogoHeader';
+import { PlaidLinkButton } from '../../src/components/PlaidLinkButton';
+import { useAuth } from '../../src/auth';
 
 export default function BillsScreen() {
   const c = useThemeColors();
+  const { user } = useAuth();
   const [bills, setBills] = useState<Bill[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -49,9 +52,29 @@ export default function BillsScreen() {
       setLoading(false);
     }
     // Non-critical: premium/Plaid status shouldn't block the bills list from loading.
-    if (Platform.OS !== 'web') {
-      getBillingMe().then((me) => setIsPremium(!!me.premium)).catch(() => {});
+    if (user?.role === 'admin') {
+      setIsPremium(true);
       getPlaidStatus().then(setPlaidStatus).catch(() => {});
+    } else {
+      getBillingMe().then((me) => {
+        setIsPremium(!!me.premium);
+        if (me.premium) getPlaidStatus().then(setPlaidStatus).catch(() => {});
+      }).catch(() => setIsPremium(false));
+    }
+  };
+
+  const importPlaidConnection = async (publicToken: string, institutionName?: string) => {
+    setPlaidSyncing(true);
+    try {
+      await exchangePlaidPublicToken(publicToken, institutionName);
+      await syncPlaidTransactions();
+      await load();
+    } catch (e: any) {
+      Alert.alert('Import failed', e?.message?.slice(0, 160) || 'Could not import transactions.');
+      throw e;
+    } finally {
+      setPlaidSyncing(false);
+      setPlaidBusy(false);
     }
   };
 
@@ -64,17 +87,7 @@ export default function BillsScreen() {
       const session = await createPlaidLinkSession({
         token: link_token,
         onSuccess: async (success: any) => {
-          setPlaidSyncing(true);
-          try {
-            await exchangePlaidPublicToken(success.publicToken, success.metadata?.institution?.name);
-            await syncPlaidTransactions();
-            await load();
-          } catch (e: any) {
-            Alert.alert('Import failed', e?.message?.slice(0, 160) || 'Could not import transactions.');
-          } finally {
-            setPlaidSyncing(false);
-            setPlaidBusy(false);
-          }
+          await importPlaidConnection(success.publicToken, success.metadata?.institution?.name);
         },
         onExit: (exit: any) => {
           setPlaidBusy(false);
@@ -196,7 +209,7 @@ export default function BillsScreen() {
           </View>
 
           {/* Connect Bank (Premium, US only) */}
-          {isPremium && Platform.OS !== 'web' && (
+          {isPremium && (
             plaidStatus?.connected && plaidStatus.items[0] ? (
               <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -232,6 +245,20 @@ export default function BillsScreen() {
                   </TouchableOpacity>
                 </View>
               </View>
+            ) : Platform.OS === 'web' ? (
+              <View style={[styles.card, styles.plaidConnectCard, { backgroundColor: c.surface, borderColor: c.border }]}>
+                <Ionicons name="business-outline" size={22} color={c.income} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.itemName, { color: c.textPrimary }]}>Connect Bank Account</Text>
+                  <Text style={[styles.itemCategory, { color: c.textMuted }]}>Auto-import bills & expenses (US only)</Text>
+                </View>
+                <PlaidLinkButton
+                  color={c.income}
+                  disabled={plaidBusy || plaidSyncing}
+                  onSuccess={importPlaidConnection}
+                  onError={(message: string) => Alert.alert('Connection failed', message)}
+                />
+              </View>
             ) : (
               <TouchableOpacity
                 testID="connect-bank-btn"
@@ -247,6 +274,15 @@ export default function BillsScreen() {
                 {plaidBusy ? <ActivityIndicator color={c.income} /> : <Ionicons name="chevron-forward" size={20} color={c.textMuted} />}
               </TouchableOpacity>
             )
+          )}
+          {!isPremium && (
+            <View style={[styles.card, styles.plaidConnectCard, { backgroundColor: c.surfaceSecondary, borderColor: c.border }]}>
+              <Ionicons name="lock-closed-outline" size={20} color={c.textMuted} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.itemName, { color: c.textPrimary }]}>Bank sync with Plaid</Text>
+                <Text style={[styles.itemCategory, { color: c.textMuted }]}>Available with a Premium plan. It securely imports recurring bills and expenses.</Text>
+              </View>
+            </View>
           )}
 
           {/* Add Button */}
