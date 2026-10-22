@@ -4,10 +4,10 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const IOS_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY || 'appl_OHMXsxmLFatVOmxPUkRdzMHzWKq';
+const IOS_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY || 'appl_IfoFPTjaFITmkfmxrmmAGKJsrcu';
 const ANDROID_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY || '';
 
-const PREMIUM_ENTITLEMENT = 'FinFlowAdvisors Pro';
+const PREMIUM_ENTITLEMENT = 'finflowadvisors_pro';
 const ANON_ID_KEY = 'finflow_rc_anon_id';
 
 export type RcPackage = {

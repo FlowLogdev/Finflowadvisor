@@ -1,3 +1,4 @@
+
 {
   "cli": {
     "version": ">= 21.0.0",
@@ -16,6 +17,11 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6762501853"
+      }
+    }
   }
 }
+
