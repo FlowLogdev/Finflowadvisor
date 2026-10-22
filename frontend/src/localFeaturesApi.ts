@@ -2,9 +2,10 @@
 // Replaces the previous sister-project proxy to make export + tickets reliable.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { getToken } from './auth';
 
-const BASE_URL = typeof window !== 'undefined'
+const BASE_URL = Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin
   ? window.location.origin
   : (process.env.EXPO_PUBLIC_BACKEND_URL || 'https://www.finflowadvisors.com');
 

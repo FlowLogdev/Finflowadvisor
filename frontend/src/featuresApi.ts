@@ -2,9 +2,10 @@
 // Shares JWT issued by cashflow-staging-4 — no re-auth needed.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { getToken } from './auth';
 
-const FEATURES_BASE = typeof window !== 'undefined'
+const FEATURES_BASE = Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin
   ? window.location.origin
   : (process.env.EXPO_PUBLIC_FEATURES_BACKEND || 'https://www.finflowadvisors.com');
 

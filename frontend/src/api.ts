@@ -1,7 +1,8 @@
 import { getToken } from './auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 
-const BASE_URL = typeof window !== 'undefined'
+const BASE_URL = Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin
   ? window.location.origin
   : (process.env.EXPO_PUBLIC_BACKEND_URL || 'https://www.finflowadvisors.com');
 const API_TIMEOUT_MS = 12_000;
