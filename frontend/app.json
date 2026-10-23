@@ -12,7 +12,9 @@
       "supportsTablet": true,
       "bundleIdentifier": "app.emergent.cashflowstaging4aaaba8d0",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "Allow FinFlow Advisors to select receipt images so it can prefill your expense details.",
+        "NSCameraUsageDescription": "Allow FinFlow Advisors to take a photo of a receipt so it can prefill your expense details."
       }
     },
     "android": {
@@ -37,13 +39,6 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#000"
-        }
-      ],
-      [
-        "expo-image-picker",
-        {
-          "photosPermission": "Allow FinFlow Advisors to select receipt images so it can prefill your expense details.",
-          "cameraPermission": "Allow FinFlow Advisors to take a photo of a receipt so it can prefill your expense details."
         }
       ],
       "expo-localization"
