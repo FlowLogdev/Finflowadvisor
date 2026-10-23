@@ -43,6 +43,32 @@ export function getToken(): string | null {
   return _token;
 }
 
+/** Refresh a Supabase access token without exposing the refresh token to screens. */
+export async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = await AsyncStorage.getItem('finflow_refresh');
+  if (!refreshToken) return null;
+
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) throw new Error('Refresh failed');
+    const session = await res.json();
+    if (!session?.access_token) throw new Error('Refresh returned no access token');
+
+    _token = session.access_token;
+    await AsyncStorage.setItem('finflow_token', session.access_token);
+    if (session.refresh_token) await AsyncStorage.setItem('finflow_refresh', session.refresh_token);
+    return session.access_token;
+  } catch {
+    _token = null;
+    await AsyncStorage.multiRemove(['finflow_token', 'finflow_refresh']);
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isGuest, setIsGuest] = useState(false);
@@ -60,8 +86,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (res.ok) {
             setUser(await res.json());
           } else {
-            _token = null;
-            await AsyncStorage.removeItem('finflow_token');
+            const refreshed = await refreshAccessToken();
+            if (refreshed) {
+              const refreshedRes = await fetch(`${BASE_URL}/api/auth/me`, {
+                headers: { Authorization: `Bearer ${refreshed}` },
+              });
+              if (refreshedRes.ok) setUser(await refreshedRes.json());
+            }
+            if (!_token) await AsyncStorage.removeItem('finflow_token');
           }
         }
         if (!_token) {

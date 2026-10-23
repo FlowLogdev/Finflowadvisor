@@ -5,6 +5,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export type ThemeMode = 'system' | 'light' | 'dark';
 
 const lightColors = {
+  // Short aliases keep newer screens compatible with the original theme API.
+  bg: '#f7f6f2',
+  card: '#ffffff',
+  text: '#1a1a18',
   background: '#f7f6f2',
   surface: '#ffffff',
   surfaceSecondary: '#f0efe9',
@@ -20,6 +24,10 @@ const lightColors = {
 };
 
 const darkColors = {
+  // Short aliases keep newer screens compatible with the original theme API.
+  bg: '#1a1a18',
+  card: '#2a2a28',
+  text: '#ffffff',
   background: '#1a1a18',
   surface: '#2a2a28',
   surfaceSecondary: '#333331',

@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 # so import the compatibility layer through the backend namespace rather than
 # relying on the function directory being added to sys.path.
 from backend.supabase_store import SupabaseStore
-import os, logging, uuid, time, asyncio
+import os, logging, uuid, time, asyncio, base64, binascii, json, re
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, timedelta
@@ -86,7 +86,12 @@ async def refresh_token(request: Request):
         raise HTTPException(status_code=401, detail="No refresh token")
     try:
         session = await db.refresh(token)
-        return {"access_token": session["access_token"]}
+        return {
+            "access_token": session["access_token"],
+            # Supabase may rotate refresh tokens. Returning it lets the mobile
+            # app replace its old token instead of eventually forcing logout.
+            "refresh_token": session.get("refresh_token"),
+        }
     except HTTPException:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
@@ -117,6 +122,17 @@ class ExpenseCreate(BaseModel):
     amount: float
     date: Optional[str] = None
     recurring: bool = False
+
+class ExpenseUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    amount: Optional[float] = None
+    date: Optional[str] = None
+    recurring: Optional[bool] = None
+
+class ReceiptScanInput(BaseModel):
+    image_base64: str = Field(min_length=16, max_length=5_600_000)
+    mime_type: str = Field(pattern=r"^image/(jpeg|jpg|png|webp)$")
 
 class SavingsGoalCreate(BaseModel):
     name: str
@@ -183,6 +199,71 @@ async def create_expense(data: ExpenseCreate, user: dict = Depends(get_current_u
     d.pop("user_id", None)
     d.pop("_id", None)
     return d
+
+@api_router.patch("/expenses/{expense_id}")
+async def update_expense(expense_id: str, data: ExpenseUpdate, user: dict = Depends(get_current_user)):
+    changes = {key: value for key, value in data.model_dump().items() if value is not None}
+    if not changes:
+        raise HTTPException(status_code=400, detail="No expense changes provided")
+    if "amount" in changes and changes["amount"] < 0:
+        raise HTTPException(status_code=400, detail="Amount cannot be negative")
+    result = await db.expenses.update_one({"id": expense_id, "user_id": user["_id"]}, {"$set": changes})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    expense = await db.expenses.find_one({"id": expense_id, "user_id": user["_id"]}, {"_id": 0, "user_id": 0})
+    return expense
+
+@api_router.post("/expenses/scan-receipt")
+async def scan_receipt(data: ReceiptScanInput, user: dict = Depends(get_current_user)):
+    """Extract draft expense fields from a receipt. Images are never persisted."""
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=503, detail="Receipt scanning is not configured")
+    try:
+        raw_image = base64.b64decode(data.image_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="Receipt image is invalid")
+    if not raw_image or len(raw_image) > 4 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Use a receipt image smaller than 4 MB")
+
+    categories = ["Dining", "Groceries", "Shopping", "Transport", "Entertainment", "Health", "Travel", "Personal care", "Gifts", "Other"]
+    prompt = """Read this receipt and return only a JSON object with these exact keys:
+name (merchant/store name or empty string), category (one of the allowed categories), amount (receipt total as a number or null), date (YYYY-MM-DD or null).
+Allowed categories: %s.
+Do not invent values. This is a draft only and the user will review it before saving.""" % ", ".join(categories)
+    try:
+        client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        completion = await client.chat.completions.create(
+            model=ADVISOR_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "You extract receipt data accurately and return valid JSON only."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:{data.mime_type};base64,{data.image_base64}", "detail": "low"}},
+                ]},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+            max_tokens=200,
+        )
+        parsed = json.loads(completion.choices[0].message.content or "{}")
+    except HTTPException:
+        raise
+    except Exception:
+        logging.exception("receipt scan failed")
+        raise HTTPException(status_code=502, detail="We could not read that receipt. Please enter the expense manually.")
+
+    name = str(parsed.get("name") or "").strip()[:120]
+    category = parsed.get("category") if parsed.get("category") in categories else "Other"
+    try:
+        amount = round(float(parsed["amount"]), 2) if parsed.get("amount") is not None else None
+        if amount is not None and (amount < 0 or amount > 1_000_000):
+            amount = None
+    except (TypeError, ValueError):
+        amount = None
+    date = parsed.get("date")
+    if not isinstance(date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        date = None
+    return {"name": name, "category": category, "amount": amount, "date": date, "needs_review": True}
 
 @api_router.delete("/expenses/{expense_id}")
 async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)):

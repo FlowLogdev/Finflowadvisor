@@ -6,8 +6,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { useThemeColors } from '../../src/theme';
-import { getExpenses, createExpense, deleteExpense, toggleRecurring, getSettings } from '../../src/api';
+import { getExpenses, createExpense, updateExpense, deleteExpense, toggleRecurring, getSettings, scanReceipt } from '../../src/api';
 import { Expense, EXPENSE_CATEGORIES, EXPENSE_CATEGORY_COLORS, Settings } from '../../src/types';
 import { ThemeToggle } from '../../src/components/LogoHeader';
 
@@ -23,6 +24,8 @@ export default function ExpensesScreen() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [recurring, setRecurring] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [scanNote, setScanNote] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -42,25 +45,113 @@ export default function ExpensesScreen() {
     }
   };
 
-  const addExpense = async () => {
-    if (!name.trim() || !amount.trim()) return;
+  const resetForm = () => {
+    setName('');
+    setCategory(EXPENSE_CATEGORIES[0]);
+    setAmount('');
+    setDate(new Date().toISOString().slice(0, 10));
+    setRecurring(false);
+    setEditingId(null);
+    setScanNote(null);
+  };
+
+  const saveExpense = async () => {
+    if (!name.trim() || !amount.trim() || Number.isNaN(Number(amount))) {
+      Alert.alert('Check expense details', 'Please enter a description and a valid amount.');
+      return;
+    }
     setSubmitting(true);
     try {
-      const exp = await createExpense({
+      const payload = {
         name: name.trim(), category,
         amount: parseFloat(amount), date, recurring,
-      });
-      setExpenses([...expenses, exp]);
-      setName('');
-      setAmount('');
-      setDate(new Date().toISOString().slice(0, 10));
-      setRecurring(false);
+      };
+      if (editingId) {
+        const exp = await updateExpense(editingId, payload);
+        setExpenses(expenses.map((item) => item.id === editingId ? exp : item));
+      } else {
+        const exp = await createExpense(payload);
+        setExpenses([...expenses, exp]);
+      }
+      resetForm();
       setShowForm(false);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      Alert.alert('Could not save expense', e?.message || 'Please try again.');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const beginEditing = (expense: Expense & { recurring?: boolean }) => {
+    setEditingId(expense.id);
+    setName(expense.name);
+    setCategory(EXPENSE_CATEGORIES.includes(expense.category as any) ? expense.category : 'Other');
+    setAmount(String(expense.amount));
+    setDate(expense.date);
+    setRecurring(Boolean(expense.recurring));
+    setScanNote(null);
+    setShowForm(true);
+  };
+
+  const scanAsset = async (asset: ImagePicker.ImagePickerAsset) => {
+    if (!asset.base64) {
+      Alert.alert('Could not read image', 'Please choose a receipt image and try again.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await scanReceipt(asset.base64, asset.mimeType || 'image/jpeg');
+      setName(result.name || '');
+      setCategory(EXPENSE_CATEGORIES.includes(result.category as any) ? result.category : 'Other');
+      setAmount(result.amount != null ? String(result.amount) : '');
+      setDate(result.date || new Date().toISOString().slice(0, 10));
+      setScanNote('Receipt scanned. Review every field before saving.');
+      setEditingId(null);
+      setShowForm(true);
+    } catch (e: any) {
+      Alert.alert('Receipt scan unavailable', e?.message || 'Please enter this expense manually.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const captureReceipt = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Camera permission needed', 'Allow camera access to scan a receipt. You can also choose a photo from your library.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'] as any,
+      base64: true,
+      quality: 0.65,
+      allowsEditing: false,
+    });
+    if (!result.canceled) await scanAsset(result.assets[0]);
+  };
+
+  const chooseReceipt = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Photo permission needed', 'Allow photo access to choose a receipt image.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'] as any,
+      base64: true,
+      quality: 0.65,
+      allowsEditing: false,
+    });
+    if (!result.canceled) await scanAsset(result.assets[0]);
+  };
+
+  const openReceiptScanner = () => {
+    Alert.alert('Add receipt', 'Your receipt image is used only to prefill this expense and is not saved.', [
+      { text: 'Take Photo', onPress: captureReceipt },
+      { text: 'Choose Photo', onPress: chooseReceipt },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const removeExpense = (id: string) => {
@@ -136,18 +227,37 @@ export default function ExpensesScreen() {
           </View>
 
           {/* Add Button */}
-          <TouchableOpacity
-            testID="toggle-add-expense-btn"
-            onPress={() => setShowForm(!showForm)}
-            style={[styles.addBtn, { backgroundColor: c.income }]}
-          >
-            <Ionicons name={showForm ? 'close' : 'add'} size={20} color="#fff" />
-            <Text style={styles.addBtnText}>{showForm ? 'Cancel' : 'Add Expense'}</Text>
-          </TouchableOpacity>
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              testID="toggle-add-expense-btn"
+              onPress={() => {
+                if (showForm) resetForm();
+                setShowForm(!showForm);
+              }}
+              style={[styles.addBtn, { backgroundColor: c.income }]}
+            >
+              <Ionicons name={showForm ? 'close' : 'add'} size={20} color="#fff" />
+              <Text style={styles.addBtnText}>{showForm ? 'Cancel' : 'Add Expense'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              testID="scan-receipt-btn"
+              onPress={openReceiptScanner}
+              disabled={submitting}
+              style={[styles.cameraBtn, { backgroundColor: c.surface, borderColor: c.border }]}
+            >
+              {submitting ? <ActivityIndicator color={c.income} /> : <Ionicons name="camera-outline" size={22} color={c.income} />}
+            </TouchableOpacity>
+          </View>
 
           {/* Add Form */}
           {showForm && (
             <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+              {scanNote && (
+                <View style={[styles.scanNotice, { backgroundColor: c.income + '18', borderColor: c.income + '55' }]}>
+                  <Ionicons name="scan-outline" size={17} color={c.income} />
+                  <Text style={[styles.scanNoticeText, { color: c.textPrimary }]}>{scanNote}</Text>
+                </View>
+              )}
               <TextInput
                 testID="expense-name-input"
                 style={[styles.input, { backgroundColor: c.surfaceSecondary, borderColor: c.border, color: c.textPrimary }]}
@@ -203,8 +313,8 @@ export default function ExpensesScreen() {
                   {recurring ? 'Recurring monthly' : 'Mark as recurring'}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity testID="submit-expense-btn" onPress={addExpense} disabled={submitting} style={[styles.submitBtn, { backgroundColor: c.income }]}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>Add Expense</Text>}
+              <TouchableOpacity testID="submit-expense-btn" onPress={saveExpense} disabled={submitting} style={[styles.submitBtn, { backgroundColor: c.income }]}>
+                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>{editingId ? 'Save Changes' : 'Add Expense'}</Text>}
               </TouchableOpacity>
             </View>
           )}
@@ -238,6 +348,9 @@ export default function ExpensesScreen() {
                 >
                   <Ionicons name={exp.recurring ? 'repeat' : 'repeat-outline'} size={16} color={exp.recurring ? c.savings : c.textMuted} />
                 </TouchableOpacity>
+                <TouchableOpacity testID={`edit-expense-${exp.id}`} onPress={() => beginEditing(exp)} style={styles.iconBtn}>
+                  <Ionicons name="pencil-outline" size={16} color={c.income} />
+                </TouchableOpacity>
                 <TouchableOpacity testID={`delete-expense-${exp.id}`} onPress={() => removeExpense(exp.id)} style={styles.iconBtn}>
                   <Ionicons name="trash-outline" size={16} color={c.expense} />
                 </TouchableOpacity>
@@ -260,7 +373,9 @@ const styles = StyleSheet.create({
   summaryCell: { width: '50%', paddingVertical: 8, alignItems: 'center' },
   summaryLabel: { fontFamily: 'DMSans_400Regular', fontSize: 12, marginBottom: 4 },
   summaryValue: { fontFamily: 'DMMono_500Medium', fontSize: 18 },
-  addBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 12, marginBottom: 16, gap: 8 },
+  addBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 12, gap: 8 },
+  actionRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  cameraBtn: { width: 52, height: 48, borderRadius: 12, borderWidth: 0.5, alignItems: 'center', justifyContent: 'center' },
   addBtnText: { fontFamily: 'DMSans_600SemiBold', fontSize: 15, color: '#fff' },
   input: { borderRadius: 12, borderWidth: 0.5, padding: 14, fontSize: 16, fontFamily: 'DMSans_400Regular', marginBottom: 12 },
   fieldLabel: { fontFamily: 'DMSans_500Medium', fontSize: 13, marginBottom: 8 },
@@ -271,6 +386,8 @@ const styles = StyleSheet.create({
   recurringText: { fontFamily: 'DMSans_500Medium', fontSize: 14 },
   submitBtn: { borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   submitBtnText: { fontFamily: 'DMSans_600SemiBold', fontSize: 15, color: '#fff' },
+  scanNotice: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 0.5, borderRadius: 10, padding: 10, marginBottom: 12 },
+  scanNoticeText: { flex: 1, fontFamily: 'DMSans_500Medium', fontSize: 13, lineHeight: 18 },
   itemCard: { borderRadius: 12, borderWidth: 0.5, padding: 12, flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   colorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 10 },
   itemName: { fontFamily: 'DMSans_500Medium', fontSize: 14 },
