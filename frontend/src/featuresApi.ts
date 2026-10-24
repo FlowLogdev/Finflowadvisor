@@ -3,7 +3,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { getToken } from './auth';
+import { getToken, refreshAccessToken } from './auth';
 
 const FEATURES_BASE = Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin
   ? window.location.origin
@@ -15,13 +15,17 @@ async function resolveToken(): Promise<string | null> {
   try { return await AsyncStorage.getItem('finflow_token'); } catch { return null; }
 }
 
-async function fApi<T = any>(path: string, options?: RequestInit, authed = true): Promise<T> {
+async function fApi<T = any>(path: string, options?: RequestInit, authed = true, retried = false): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authed) {
     const token = await resolveToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
   }
   const res = await fetch(`${FEATURES_BASE}${path}`, { headers, ...options });
+  if (authed && (res.status === 401 || res.status === 403) && !retried) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) return fApi<T>(path, options, authed, true);
+  }
   if (!res.ok) {
     const msg = await res.text().catch(() => 'Unknown error');
     throw new Error(`API ${res.status}: ${msg}`);

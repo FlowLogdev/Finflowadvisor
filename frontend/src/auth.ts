@@ -38,6 +38,10 @@ const AuthContext = createContext<AuthContextValue>({
 });
 
 let _token: string | null = null;
+// Several screens load at once on startup. Supabase rotates a refresh token on
+// use, so concurrent refreshes can otherwise invalidate each other and leave a
+// newly authenticated user with an empty session.
+let refreshInFlight: Promise<string | null> | null = null;
 
 export function getToken(): string | null {
   return _token;
@@ -45,27 +49,37 @@ export function getToken(): string | null {
 
 /** Refresh a Supabase access token without exposing the refresh token to screens. */
 export async function refreshAccessToken(): Promise<string | null> {
-  const refreshToken = await AsyncStorage.getItem('finflow_refresh');
-  if (!refreshToken) return null;
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    const refreshToken = await AsyncStorage.getItem('finflow_refresh');
+    if (!refreshToken) return null;
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!res.ok) throw new Error('Refresh failed');
+      const session = await res.json();
+      if (!session?.access_token) throw new Error('Refresh returned no access token');
+
+      _token = session.access_token;
+      await AsyncStorage.setItem('finflow_token', session.access_token);
+      if (session.refresh_token) await AsyncStorage.setItem('finflow_refresh', session.refresh_token);
+      return session.access_token;
+    } catch {
+      _token = null;
+      await AsyncStorage.multiRemove(['finflow_token', 'finflow_refresh']);
+      return null;
+    }
+  })();
 
   try {
-    const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-    if (!res.ok) throw new Error('Refresh failed');
-    const session = await res.json();
-    if (!session?.access_token) throw new Error('Refresh returned no access token');
-
-    _token = session.access_token;
-    await AsyncStorage.setItem('finflow_token', session.access_token);
-    if (session.refresh_token) await AsyncStorage.setItem('finflow_refresh', session.refresh_token);
-    return session.access_token;
-  } catch {
-    _token = null;
-    await AsyncStorage.multiRemove(['finflow_token', 'finflow_refresh']);
-    return null;
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
   }
 }
 

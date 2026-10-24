@@ -27,7 +27,8 @@ async function api<T = any>(path: string, options?: RequestInit, retried = false
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
     const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, signal: controller.signal });
-    if (res.status === 401 && !retried) {
+    // Supabase can return either 401 or 403 for an expired access token.
+    if ((res.status === 401 || res.status === 403) && !retried) {
       const refreshed = await refreshAccessToken();
       if (refreshed) return api<T>(path, options, true);
     }

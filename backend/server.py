@@ -12,6 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 # relying on the function directory being added to sys.path.
 from backend.supabase_store import SupabaseStore
 import os, logging, uuid, time, asyncio, base64, binascii, json, re
+from urllib.parse import quote as url_quote
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, timedelta
@@ -1317,31 +1318,60 @@ async def _fetch_stock_quote(http: httpx.AsyncClient, symbol: str) -> Optional[d
     now = time.time()
     if cached and (now - cached["ts"]) < _stock_cache_ttl:
         return cached["data"]
-    if not FINNHUB_API_KEY:
-        return None
+    if FINNHUB_API_KEY:
+        try:
+            r = await http.get(
+                "https://finnhub.io/api/v1/quote",
+                params={"symbol": symbol, "token": FINNHUB_API_KEY},
+            )
+            if r.status_code == 200:
+                j = r.json()
+                # Finnhub returns all zeros for unknown symbols.
+                if j and j.get("c"):
+                    data = {
+                        "symbol": symbol,
+                        "price": j.get("c"),
+                        "change": j.get("d"),
+                        "changePercent": j.get("dp"),
+                        "high": j.get("h"),
+                        "low": j.get("l"),
+                        "prevClose": j.get("pc"),
+                    }
+                    _stock_cache[symbol] = {"ts": now, "data": data}
+                    return data
+        except Exception:
+            logger.warning("Finnhub quote lookup failed for %s", symbol)
+
+    # A missing or rate-limited Finnhub key should not turn the watchlist into
+    # an empty card. Yahoo's public chart endpoint provides a no-key fallback.
     try:
         r = await http.get(
-            "https://finnhub.io/api/v1/quote",
-            params={"symbol": symbol, "token": FINNHUB_API_KEY},
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{url_quote(symbol, safe='^.=-')}",
+            params={"range": "5d", "interval": "1d"},
+            headers={"User-Agent": "FinFlowAdvisors/1.1"},
         )
         if r.status_code != 200:
             return None
-        j = r.json()
-        # Finnhub returns all zeros for unknown symbols
-        if not j or not j.get("c"):
+        result = (r.json().get("chart", {}).get("result") or [None])[0] or {}
+        meta = result.get("meta") or {}
+        price = meta.get("regularMarketPrice")
+        previous = meta.get("chartPreviousClose") or meta.get("previousClose")
+        if price is None or previous in (None, 0):
             return None
+        change = float(price) - float(previous)
         data = {
             "symbol": symbol,
-            "price": j.get("c"),
-            "change": j.get("d"),
-            "changePercent": j.get("dp"),
-            "high": j.get("h"),
-            "low": j.get("l"),
-            "prevClose": j.get("pc"),
+            "price": float(price),
+            "change": change,
+            "changePercent": (change / float(previous)) * 100,
+            "high": meta.get("regularMarketDayHigh") or price,
+            "low": meta.get("regularMarketDayLow") or price,
+            "prevClose": float(previous),
         }
         _stock_cache[symbol] = {"ts": now, "data": data}
         return data
     except Exception:
+        logger.warning("Stock quote fallback failed for %s", symbol)
         return None
 
 
