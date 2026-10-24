@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock
 from urllib.parse import quote
+from datetime import datetime, date
+from typing import Any
 
 
 def bootstrap_store():
@@ -47,3 +49,30 @@ class AdminBootstrapTests(unittest.IsolatedAsyncioTestCase):
         await store.ensure_admin('admin@example.invalid', 'initial-password')
         store.create_user.assert_awaited_once_with('admin@example.invalid', 'initial-password', 'Admin', 'admin')
         store.request.assert_not_awaited()
+
+
+class FinancialFilterTests(unittest.TestCase):
+    def setUp(self):
+        tree = ast.parse((Path(__file__).parents[1] / 'supabase_store.py').read_text())
+        selected = [n for n in tree.body if
+                    isinstance(n, ast.FunctionDef) and n.name == '_wire_value' or
+                    isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == '_FIELD_MAP']
+        store = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'SupabaseStore')
+        selected.append(next(n for n in store.body if isinstance(n, ast.FunctionDef) and n.name == 'filters'))
+        ns = {'datetime': datetime, 'date': date, 'Any': Any, 'quote': quote}
+        exec(compile(ast.Module(body=selected, type_ignores=[]), '<filters>', 'exec'), ns)
+        self.store = type('Store', (), {'filters': ns['filters']})()
+
+    def test_finbot_month_filter_is_a_valid_postgres_date(self):
+        self.assertEqual(self.store.filters('expenses', {'date': {'$gte': '2026-10-01T00:00:00+00:00'}}),
+                         {'expense_date': 'gte.2026-10-01'})
+
+    def test_query_values_are_left_for_http_client_to_encode(self):
+        self.assertEqual(self.store.filters('support_tickets', {'email': 'a+b@example.invalid'}),
+                         {'email': 'eq.a+b@example.invalid'})
+        self.assertEqual(self.store.filters('ai_messages', {'created_at': {'$gte': '2026-10-01T00:00:00+00:00'}}),
+                         {'created_at': 'gte.2026-10-01T00:00:00+00:00'})
+
+    def test_boolean_and_date_equality(self):
+        self.assertEqual(self.store.filters('expenses', {'recurring': True, 'date': '2026-10-24T12:00:00Z'}),
+                         {'recurring': 'eq.true', 'expense_date': 'eq.2026-10-24'})

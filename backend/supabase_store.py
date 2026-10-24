@@ -185,15 +185,23 @@ class SupabaseStore:
         mapping = _FIELD_MAP.get(table, {})
         for key, value in query.items():
             field = mapping.get(key, key)
+            # httpx encodes query parameters once. Pre-quoting turned a
+            # timestamp's ':' into '%253A', which Postgres cannot parse.
+            def literal(item):
+                item = _wire_value(item)
+                if field == "expense_date" and isinstance(item, str):
+                    item = item.split("T", 1)[0]
+                return str(item).lower() if isinstance(item, bool) else str(item)
+
             if isinstance(value, dict) and "$in" in value:
-                params[field] = "in.(" + ",".join(quote(str(v), safe="") for v in value["$in"]) + ")"
+                params[field] = "in.(" + ",".join(literal(v) for v in value["$in"]) + ")"
             elif isinstance(value, dict) and "$regex" in value:
                 prefix = str(value["$regex"]).removeprefix("^")
-                params[field] = f"like.{quote(prefix, safe='')}%"
+                params[field] = f"like.{prefix}%"
             elif isinstance(value, dict) and "$gte" in value:
-                params[field] = f"gte.{quote(str(value['$gte']), safe='')}"
+                params[field] = f"gte.{literal(value['$gte'])}"
             else:
-                params[field] = f"eq.{quote(str(_wire_value(value)).lower() if isinstance(value, bool) else str(_wire_value(value)), safe='')}"
+                params[field] = f"eq.{literal(value)}"
         return params
 
     async def create_user(self, email: str, password: str, name: str, role: str = "user") -> dict[str, Any]:
