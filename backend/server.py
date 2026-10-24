@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 # so import the compatibility layer through the backend namespace rather than
 # relying on the function directory being added to sys.path.
 from backend.supabase_store import SupabaseStore
-import os, logging, uuid, time, asyncio, base64, binascii, json, re
+import os, logging, uuid, time, asyncio, base64, binascii, json, re, csv, io, math
 from urllib.parse import quote as url_quote
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -1812,26 +1812,40 @@ async def _fetch_bcb_series(http: httpx.AsyncClient, series_id: int) -> Optional
     return None
 
 async def _fetch_fred_series(http: httpx.AsyncClient, series_id: str) -> Optional[float]:
-    """FRED latest observation (e.g., FEDFUNDS, DGS10, DGS5, DGS1)."""
-    if not FRED_API_KEY:
-        return None
+    """Use FRED's API when configured, otherwise its public CSV download."""
+    try:
+        if FRED_API_KEY:
+            r = await http.get(
+                "https://api.stlouisfed.org/fred/series/observations",
+                params={
+                    "series_id": series_id,
+                    "api_key": FRED_API_KEY,
+                    "file_type": "json",
+                    "sort_order": "desc",
+                    "limit": 5,
+                },
+            )
+            if r.status_code == 200:
+                for o in r.json().get("observations", []):
+                    v = o.get("value")
+                    if v not in (None, ".", "") and math.isfinite(float(v)):
+                        return float(v)
+    except Exception:
+        pass
     try:
         r = await http.get(
-            "https://api.stlouisfed.org/fred/series/observations",
-            params={
-                "series_id": series_id,
-                "api_key": FRED_API_KEY,
-                "file_type": "json",
-                "sort_order": "desc",
-                "limit": 5,
-            },
+            "https://fred.stlouisfed.org/graph/fredgraph.csv",
+            params={"id": series_id, "cosd": (datetime.now(timezone.utc) - timedelta(days=120)).date().isoformat()},
+            follow_redirects=True,
         )
         if r.status_code == 200:
-            obs = r.json().get("observations", [])
-            for o in obs:
-                v = o.get("value")
-                if v not in (None, ".", ""):
-                    return float(v)
+            for row in reversed(list(csv.DictReader(io.StringIO(r.text)))):
+                try:
+                    value = float(row.get(series_id, ""))
+                    if math.isfinite(value):
+                        return value
+                except (ValueError, TypeError):
+                    continue
     except Exception:
         pass
     return None
@@ -1850,8 +1864,11 @@ async def investment_rates(user: dict = Depends(get_current_user)):
     try:
         async with httpx.AsyncClient(timeout=10.0) as http:
             # Brazil: Selic target (annual), Selic overnight daily, CDI daily, Poupança monthly
-            selic_target = await _fetch_bcb_series(http, 4189)   # Selic meta anual %
-            cdi_daily    = await _fetch_bcb_series(http, 12)      # CDI over daily %
+            selic_target, cdi_daily, fed, t1y, t5y, t10y = await asyncio.gather(
+                _fetch_bcb_series(http, 4189), _fetch_bcb_series(http, 12),
+                _fetch_fred_series(http, "FEDFUNDS"), _fetch_fred_series(http, "DGS1"),
+                _fetch_fred_series(http, "DGS5"), _fetch_fred_series(http, "DGS10"),
+            )
             # Annualise daily CDI (252 business days)
             cdi_annual = None
             if cdi_daily is not None:
@@ -1866,10 +1883,6 @@ async def investment_rates(user: dict = Depends(get_current_user)):
             }
 
             # USA: FEDFUNDS (Fed funds effective), DGS1 (1Y), DGS5 (5Y), DGS10 (10Y)
-            fed     = await _fetch_fred_series(http, "FEDFUNDS")
-            t1y     = await _fetch_fred_series(http, "DGS1")
-            t5y     = await _fetch_fred_series(http, "DGS5")
-            t10y    = await _fetch_fred_series(http, "DGS10")
             # Average HYSA APY rough = fed_funds - 1.0% (conservative estimate)
             hysa_avg = max(0.5, (fed or 0) - 1.0) if fed else 4.0
             us = {
@@ -1947,13 +1960,22 @@ async def investment_project(data: ProjectReq, user: dict = Depends(get_current_
     br = rates_resp.get("br", {})
     us = rates_resp.get("us", {})
     s = data.scenarios or {}
+    # A missing observation is serialized as null, so dict.get(default) does
+    # not protect the calculator. Use explicit, disclosed modelling assumptions.
+    assumed_rates = []
+    def benchmark(values, key, assumption):
+        value = values.get(key)
+        if value is None:
+            assumed_rates.append(key)
+            return assumption
+        return float(value)
     # Prioritise user-supplied overrides, then live rates, then fallbacks
-    cdb_rate       = float(s.get("cdb",      br.get("cdi_annual_pct", 10.65) * 1.05))   # 105% CDI typical
-    poupanca_rate  = float(s.get("poupanca", br.get("poupanca_annual_pct", 6.17)))
-    tesouro_rate   = float(s.get("tesouro",  br.get("cdi_annual_pct", 10.65)))
-    hysa_rate      = float(s.get("hysa",     us.get("hysa_avg_pct", 4.30)))
+    cdb_rate       = float(s["cdb"]) if "cdb" in s else benchmark(br, "cdi_annual_pct", 10.65) * 1.05
+    poupanca_rate  = float(s["poupanca"]) if "poupanca" in s else benchmark(br, "poupanca_annual_pct", 6.17)
+    tesouro_rate   = float(s["tesouro"]) if "tesouro" in s else benchmark(br, "cdi_annual_pct", 10.65)
+    hysa_rate      = float(s["hysa"]) if "hysa" in s else benchmark(us, "hysa_avg_pct", 4.30)
     savings_rate   = float(s.get("savings",  0.45))                                     # Chase/BOA avg
-    ustreasury_rate= float(s.get("ustreasury", us.get("treasury_10y_pct", 4.25)))
+    ustreasury_rate= float(s["ustreasury"]) if "ustreasury" in s else benchmark(us, "treasury_10y_pct", 4.25)
 
     def simulate(annual_pct: float) -> list:
         """Monthly compounding series. Returns list of (month, balance)."""
@@ -1981,6 +2003,7 @@ async def investment_project(data: ProjectReq, user: dict = Depends(get_current_
     return {
         "period_months": data.period_months,
         "total_invested": round(total_invested, 2),
+        "assumed_rates": sorted(set(assumed_rates)),
         "br": {
             "cdb":      pack(cdb_rate),
             "tesouro":  pack(tesouro_rate),
