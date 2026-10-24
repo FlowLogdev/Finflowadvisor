@@ -231,10 +231,10 @@ class SupabaseStore:
         existing = await self.admin_user_by_email(email)
         if existing:
             user_id = existing["id"]
-            await self.request(
-                "PUT", f"/auth/v1/admin/users/{quote(user_id, safe='')}",
-                json={"password": password, "email_confirm": True},
-            )
+            # Startup runs on every serverless instance. Updating an existing
+            # Auth password revokes sessions, including ones just issued by a
+            # different instance. Bootstrap may repair the profile, but must
+            # never change an existing account's credentials.
             await self.request(
                 "POST", "/rest/v1/profiles",
                 json=[{"id": user_id, "name": existing.get("user_metadata", {}).get("name") or "Admin", "role": "admin"}],
